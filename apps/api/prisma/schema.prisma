@@ -1,0 +1,109 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PASSENGER
+  DRIVER
+}
+
+enum PoolStatus {
+  OPEN
+  LOCKED
+  COMPLETED
+  CANCELLED
+}
+
+enum RideStatus {
+  REQUESTED
+  MATCHED
+  DRIVER_ARRIVED
+  STARTED
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  phone        String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tesla        Tesla?
+  rideRequests RideRequest[]
+
+  @@map("users")
+}
+
+model Zone {
+  id   String @id @default(cuid())
+  name String @unique
+  lat  Float?
+  lng  Float?
+
+  pickupRequests      RideRequest[] @relation("PickupZone")
+  destinationRequests RideRequest[] @relation("DestinationZone")
+
+  @@map("zones")
+}
+
+// One Tesla per driver (see @unique on driverId).
+model Tesla {
+  id        String   @id @default(cuid())
+  driverId  String   @unique
+  driver    User     @relation(fields: [driverId], references: [id])
+  label     String
+  capacity  Int
+  isOnline  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pools Pool[]
+
+  @@map("teslas")
+}
+
+// A single shared vehicle trip. seatsTaken is bounded by tesla.capacity
+// and kept in sync with the sum of active RideRequest.seats in this pool.
+model Pool {
+  id         String     @id @default(cuid())
+  teslaId    String
+  tesla      Tesla      @relation(fields: [teslaId], references: [id])
+  status     PoolStatus @default(OPEN)
+  seatsTaken Int        @default(0)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  rideRequests RideRequest[]
+
+  @@map("pools")
+}
+
+// One passenger's membership in a Pool. Fare/status are tracked per
+// passenger even though several RideRequests can share one Pool/vehicle.
+model RideRequest {
+  id                String     @id @default(cuid())
+  passengerId       String
+  passenger         User       @relation(fields: [passengerId], references: [id])
+  pickupZoneId      String
+  pickupZone        Zone       @relation("PickupZone", fields: [pickupZoneId], references: [id])
+  destinationZoneId String
+  destinationZone   Zone       @relation("DestinationZone", fields: [destinationZoneId], references: [id])
+  seats             Int        @default(1)
+  status            RideStatus @default(REQUESTED)
+  farePaisa         Int?
+  poolId            String?
+  pool              Pool?      @relation(fields: [poolId], references: [id])
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@map("ride_requests")
+}
