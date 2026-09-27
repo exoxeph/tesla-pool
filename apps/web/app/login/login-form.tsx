@@ -31,7 +31,7 @@ export function LoginForm() {
         password,
       });
       saveAuthToken(data.token);
-      router.push("/dashboard");
+      router.push(data.user.role === "DRIVER" ? "/driver/dashboard" : "/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setIsSubmitting(false);
@@ -108,14 +108,15 @@ export function LoginForm() {
         </button>
       </form>
 
-      {role === "passenger" ? (
-        <p className="font-sans text-sm text-ink-600">
-          New passenger?{" "}
-          <Link href="/signup" className="font-medium text-green-600 underline">
-            Create an account
-          </Link>
-        </p>
-      ) : null}
+      <p className="font-sans text-sm text-ink-600">
+        {role === "driver" ? "New driver?" : "New passenger?"}{" "}
+        <Link
+          href={`/signup?role=${role}`}
+          className="font-medium text-green-600 underline"
+        >
+          Create an account
+        </Link>
+      </p>
     </main>
   );
 }

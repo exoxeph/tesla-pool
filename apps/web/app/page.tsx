@@ -44,6 +44,13 @@ export default function HomePage() {
               </span>
             </Link>
           </div>
+
+          <p className="mt-4 font-sans text-sm text-ink-600">
+            New here?{" "}
+            <Link href="/signup" className="font-medium text-green-600 underline">
+              Sign up
+            </Link>
+          </p>
         </div>
 
         {/* Authored SVG gauge — the direction's signature illustration,
