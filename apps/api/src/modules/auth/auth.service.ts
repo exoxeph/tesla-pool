@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { config } from "../../config";
 import { HttpError } from "../../common/httpError";
 import { prisma } from "../../db/prisma";
-import type { LoginInput, SignupInput } from "./auth.schema";
+import type { DriverSignupInput, LoginInput, SignupInput } from "./auth.schema";
 
 const SALT_ROUNDS = 10;
 
@@ -41,6 +41,50 @@ export async function signup(input: SignupInput) {
   });
 
   return { token: signToken(user.id, user.role), user: toPublicUser(user) };
+}
+
+export async function driverSignup(input: DriverSignupInput) {
+  const existing = await prisma.user.findUnique({
+    where: { phone: input.phone },
+  });
+  if (existing) {
+    throw new HttpError(409, "Phone number is already registered");
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
+
+  // Single transaction: a driver with no vehicle (or a vehicle with no
+  // owner) is an invalid state, so both inserts commit or neither does.
+  const { user, tesla } = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: {
+        name: input.name,
+        phone: input.phone,
+        passwordHash,
+        role: "DRIVER",
+      },
+    });
+    const tesla = await tx.tesla.create({
+      data: {
+        driverId: user.id,
+        label: input.vehicleLabel,
+        capacity: input.capacity,
+        isOnline: false,
+      },
+    });
+    return { user, tesla };
+  });
+
+  return {
+    token: signToken(user.id, user.role),
+    user: toPublicUser(user),
+    tesla: {
+      id: tesla.id,
+      label: tesla.label,
+      capacity: tesla.capacity,
+      isOnline: tesla.isOnline,
+    },
+  };
 }
 
 export async function login(input: LoginInput) {
