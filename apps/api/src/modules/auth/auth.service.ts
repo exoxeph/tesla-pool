@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { config } from "../../config";
 import { HttpError } from "../../common/httpError";
 import { prisma } from "../../db/prisma";
-import type { SignupInput } from "./auth.schema";
+import type { LoginInput, SignupInput } from "./auth.schema";
 
 const SALT_ROUNDS = 10;
 
@@ -39,6 +39,25 @@ export async function signup(input: SignupInput) {
       role: "PASSENGER",
     },
   });
+
+  return { token: signToken(user.id, user.role), user: toPublicUser(user) };
+}
+
+export async function login(input: LoginInput) {
+  const user = await prisma.user.findUnique({
+    where: { phone: input.phone },
+  });
+  if (!user) {
+    throw new HttpError(401, "Invalid phone or password");
+  }
+
+  const passwordMatches = await bcrypt.compare(
+    input.password,
+    user.passwordHash
+  );
+  if (!passwordMatches) {
+    throw new HttpError(401, "Invalid phone or password");
+  }
 
   return { token: signToken(user.id, user.role), user: toPublicUser(user) };
 }
