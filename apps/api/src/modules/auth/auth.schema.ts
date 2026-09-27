@@ -1,9 +1,21 @@
 import { z } from "zod";
 
-// Bangladeshi mobile format: 01[3-9]XXXXXXXX, 11 digits total.
+// Bangladeshi mobile format: 01[3-9]XXXXXXXX, 11 digits total. Normalizes
+// common real-world formatting (surrounding whitespace, spaces/dashes
+// between digit groups, a +880/880 country-code prefix) before validating,
+// so "+880 1712-345678" and "01712345678" both resolve to the same value.
 const phoneSchema = z
   .string()
-  .regex(/^01[3-9]\d{8}$/, "Enter a valid Bangladeshi phone number");
+  .transform((val) =>
+    val
+      .trim()
+      .replace(/[\s-]/g, "")
+      .replace(/^\+?880/, "0")
+  )
+  .refine(
+    (val) => /^01[3-9]\d{8}$/.test(val),
+    "Enter a valid Bangladeshi phone number"
+  );
 
 export const signupSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100),
