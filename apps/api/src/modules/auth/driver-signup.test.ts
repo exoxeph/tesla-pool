@@ -87,4 +87,27 @@ describe("POST /auth/driver-signup", () => {
     expect(teslas).toHaveLength(1);
     expect(teslas[0].driverId).toBe(users[0].id);
   });
+
+  it("rejects a duplicate phone number", async () => {
+    await request(app).post("/auth/driver-signup").send(validDriverSignup);
+
+    const res = await request(app)
+      .post("/auth/driver-signup")
+      .send({ ...validDriverSignup, name: "Someone Else" });
+
+    expect(res.status).toBe(409);
+    // no orphaned second user/tesla from the rejected attempt
+    expect(users).toHaveLength(1);
+    expect(teslas).toHaveLength(1);
+  });
+
+  it("rejects a capacity outside 1-6", async () => {
+    const res = await request(app)
+      .post("/auth/driver-signup")
+      .send({ ...validDriverSignup, capacity: 7 });
+
+    expect(res.status).toBe(400);
+    expect(users).toHaveLength(0);
+    expect(teslas).toHaveLength(0);
+  });
 });
