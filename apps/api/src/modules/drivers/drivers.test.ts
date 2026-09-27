@@ -62,4 +62,36 @@ describe("PATCH /drivers/me/status", () => {
     expect(res.body.tesla).toMatchObject({ id: "tesla-1", isOnline: true });
     expect(teslas.find((t) => t.driverId === "driver-2")?.isOnline).toBe(false);
   });
+
+  it("rejects a passenger token with 403", async () => {
+    const res = await request(app)
+      .patch("/drivers/me/status")
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "PASSENGER")}`)
+      .send({ isOnline: true });
+
+    expect(res.status).toBe(403);
+    expect(teslas.find((t) => t.driverId === "driver-1")?.isOnline).toBe(false);
+  });
+
+  it("a different driver's token never affects another driver's tesla, even if the body names one", async () => {
+    // The endpoint never reads an id from the body — confirm that an
+    // attempt to smuggle another driver's id through the payload has no
+    // effect: driver-2's token can only ever touch tesla-2.
+    const res = await request(app)
+      .patch("/drivers/me/status")
+      .set("Authorization", `Bearer ${tokenFor("driver-2", "DRIVER")}`)
+      .send({ isOnline: true, driverId: "driver-1", teslaId: "tesla-1" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.tesla.id).toBe("tesla-2");
+    expect(teslas.find((t) => t.driverId === "driver-1")?.isOnline).toBe(false);
+  });
+
+  it("rejects a missing token with 401", async () => {
+    const res = await request(app)
+      .patch("/drivers/me/status")
+      .send({ isOnline: true });
+
+    expect(res.status).toBe(401);
+  });
 });
