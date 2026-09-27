@@ -1,0 +1,44 @@
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { config } from "../../config";
+import { HttpError } from "../../common/httpError";
+import { prisma } from "../../db/prisma";
+import type { SignupInput } from "./auth.schema";
+
+const SALT_ROUNDS = 10;
+
+function signToken(userId: string, role: string) {
+  return jwt.sign({ sub: userId, role }, config.JWT_SECRET, {
+    expiresIn: "7d",
+  });
+}
+
+function toPublicUser(user: {
+  id: string;
+  name: string;
+  phone: string;
+  role: string;
+}) {
+  return { id: user.id, name: user.name, phone: user.phone, role: user.role };
+}
+
+export async function signup(input: SignupInput) {
+  const existing = await prisma.user.findUnique({
+    where: { phone: input.phone },
+  });
+  if (existing) {
+    throw new HttpError(409, "Phone number is already registered");
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
+  const user = await prisma.user.create({
+    data: {
+      name: input.name,
+      phone: input.phone,
+      passwordHash,
+      role: "PASSENGER",
+    },
+  });
+
+  return { token: signToken(user.id, user.role), user: toPublicUser(user) };
+}
