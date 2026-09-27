@@ -6,6 +6,8 @@ node_modules/
 # next.js
 apps/web/.next/
 apps/web/out/
+apps/web/next-env.d.ts
+*.tsbuildinfo
 
 # production
 dist/
@@ -34,3 +36,7 @@ coverage/
 # ide
 .vscode/
 .idea/
+
+# impeccable (local design-tool product context, not part of the shipped product)
+PRODUCT.md
+.impeccable/
