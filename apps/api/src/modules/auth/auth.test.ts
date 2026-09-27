@@ -63,6 +63,24 @@ describe("POST /auth/signup", () => {
 
     expect(res.status).toBe(409);
   });
+
+  it("rejects a malformed phone number", async () => {
+    const res = await request(app)
+      .post("/auth/signup")
+      .send({ ...validSignup, phone: "12345" });
+
+    expect(res.status).toBe(400);
+    expect(users).toHaveLength(0);
+  });
+
+  it("rejects a password under 8 characters", async () => {
+    const res = await request(app)
+      .post("/auth/signup")
+      .send({ ...validSignup, password: "short1" });
+
+    expect(res.status).toBe(400);
+    expect(users).toHaveLength(0);
+  });
 });
 
 describe("POST /auth/login", () => {
