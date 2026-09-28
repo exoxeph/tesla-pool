@@ -36,7 +36,3 @@ coverage/
 # ide
 .vscode/
 .idea/
-
-# impeccable (local design-tool product context, not part of the shipped product)
-PRODUCT.md
-.impeccable/

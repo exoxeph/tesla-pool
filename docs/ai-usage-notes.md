@@ -188,6 +188,29 @@ and a downstream tool caught before the user did, then triaged correctly
 (real problem fixed everywhere it was duplicated, false-positive
 suppressed narrowly with a documented reason, not broadly).
 
+### Rejected — Impeccable-driven visual direction abandoned for Codex's redesign (style/ui-refresh)
+
+The homepage and auth/dashboard pages went through multiple rounds of
+Impeccable-tool-driven design (a formal dual-agent critique, a "CNG meter
+/ permit sticker" direction contract, a DESIGN.md written to its schema)
+across this branch's history. After a further revision pass, the user
+rated the result 2/10 and had a separate tool (Codex) redo the frontend
+entirely — a different visual system (forest/lime/mango, `AuthShell`,
+a shared icon set), which is what's actually shipping. Once that
+replacement was live, `PRODUCT.md`, the `.impeccable/` directory (config,
+critique snapshots, surface briefs), and the impeccable-specific
+`.gitignore` rule were removed at the user's request, and the design
+hook was disabled for the project. `DESIGN.md` was kept — Codex rewrote
+it as a plain project doc describing the new system, no longer tied to
+Impeccable's schema.
+
+Recorded plainly rather than omitted: a whole tool-driven approach was
+tried, iterated on with real process (critique scores, a written
+direction contract, live browser verification), and still didn't land
+for the user — and was replaced by different tooling, not by the same
+approach done more carefully. That's a legitimate "rejected" outcome for
+Section 8, not a failure to hide.
+
 ### Process note — commit timestamps vs. actual incremental work
 
 `feature/passenger-auth`'s 8 commits were made in two tight clusters
