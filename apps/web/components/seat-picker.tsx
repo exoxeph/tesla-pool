@@ -19,7 +19,7 @@ export function SeatPicker({
       id={id}
       role={readOnly ? undefined : "radiogroup"}
       aria-label={readOnly ? undefined : "Seat capacity"}
-      className="flex gap-1.5"
+      className="grid grid-cols-6 gap-2"
     >
       {SEATS.map((seat) => {
         const selected = seat === value;
@@ -32,10 +32,10 @@ export function SeatPicker({
             disabled={readOnly}
             onClick={() => onChange?.(seat)}
             className={
-              "flex h-9 w-9 items-center justify-center rounded-md border-2 font-meter text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
+              "focus-ring flex h-10 min-w-0 items-center justify-center rounded-xl border font-meter text-xs transition " +
               (selected
-                ? "border-green-600 bg-green-600 text-white"
-                : "border-border bg-surface text-ink-600") +
+                ? "border-forest-800 bg-forest-800 text-lime-300 shadow-sm"
+                : "border-line bg-white text-ink-500 hover:border-forest-700") +
               (readOnly ? " cursor-default" : " cursor-pointer")
             }
           >

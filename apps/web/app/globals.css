@@ -2,55 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: light;
-}
+:root { color-scheme: light; }
+* { border-color: #d9e1d8; }
+html { scroll-behavior: smooth; }
 
 body {
-  @apply antialiased;
+  @apply bg-surface font-sans text-ink-900 antialiased;
+  background-image:
+    radial-gradient(circle at 0% 0%, rgba(220, 255, 114, 0.16), transparent 25rem),
+    linear-gradient(180deg, #fbfcf8 0%, #f4f6f0 38%, #eef2eb 100%);
 }
 
-/* Sticker-card affordance: a slight stuck-on rotation plus one clipped
-   corner, used by the permit-style CTAs and the meter widget. */
-.sticker-card {
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+::selection { background: #dcff72; color: #0a1814; }
+.display-tight { font-stretch: condensed; letter-spacing: -0.025em; }
+
+.route-grid {
+  background-image:
+    linear-gradient(rgba(217, 225, 216, 0.5) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(217, 225, 216, 0.5) 1px, transparent 1px);
+  background-size: 32px 32px;
 }
 
-@keyframes meter-tick-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.noise { position: relative; isolation: isolate; }
+.noise::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.08;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
 }
 
-.meter-tick {
-  animation: meter-tick-in 500ms ease-out both;
+.field { @apply w-full rounded-xl border border-line bg-white px-4 py-3 text-[15px] text-ink-950 shadow-sm outline-none transition; }
+.field::placeholder { color: #82928c; }
+.field:hover { border-color: #aebdb6; }
+.field:focus { border-color: #18513f; box-shadow: 0 0 0 4px rgba(203, 243, 78, 0.35); }
+.field-error { border-color: #be3d2f; }
+.focus-ring { @apply focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lime-300/50; }
+
+@keyframes float-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
+@keyframes route-draw {
+  from { stroke-dashoffset: 320; }
+  to { stroke-dashoffset: 0; }
+}
+.float-in { animation: float-in 650ms cubic-bezier(.2,.75,.25,1) both; }
+.route-draw { stroke-dasharray: 320; animation: route-draw 1.4s cubic-bezier(.2,.75,.25,1) both; }
 
 @media (prefers-reduced-motion: reduce) {
-  .meter-tick {
-    animation: none;
-  }
+  html { scroll-behavior: auto; }
+  .float-in, .route-draw { animation: none; }
 }
-
-/* Dash-panel texture: a faint dot grid, like the perforated plastic on an
-   instrument panel. Grounded in the CNG-dashboard direction, not decoration
-   for its own sake. */
-.dash-grid {
-  background-image: radial-gradient(#dce3e0 1px, transparent 1px);
-  background-size: 18px 18px;
-}
-
-/* The one way the CNG-permit world extends onto task surfaces (forms, the
-   driver dashboard): a top permit-stripe accent plus the dash-grid
-   texture. Deliberately restrained compared to the homepage's sticker
-   rotation/clip-path — these are Operate-mode surfaces, so the motif
-   lives in one precise detail, not full expression. */
-.permit-card {
-  @apply dash-grid border-t-4 border-t-green-500 bg-surface-card;
-}
-

@@ -1,52 +1,29 @@
 import type { Config } from "tailwindcss";
 
-// Design tokens for the "CNG meter & permit sticker" direction (see
-// .impeccable/surfaces/app-page-tsx.md for the full contract). Committed
-// color strategy: green carries 30-60% of the surface at page scale, not
-// as a scattered accent. Pages must reference these tokens, never raw hex.
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        // CNG body green — the committed color.
-        green: {
-          50: "#E7F5EC",
-          500: "#0F8A3C", // large-scale fields, oversized display text only
-          600: "#0B6B2E", // interactive surfaces carrying small/white text
-        },
-        // dash-plastic charcoal — structural ink.
-        ink: {
-          900: "#14181A",
-          600: "#4A5551",
-        },
-        // laminated sticker-card surfaces — cool white, never warm cream.
-        surface: {
-          DEFAULT: "#FFFFFF",
-          card: "#F4F6F5",
-        },
-        // seven-segment meter-digit accent — decorative/numeral use only,
-        // never as a text color on light backgrounds (fails contrast).
-        amber: {
-          500: "#FFB100",
-        },
-        border: {
-          DEFAULT: "#DCE3E0",
-        },
-        danger: {
-          50: "#FDECEA",
-          600: "#B3261E",
-        },
+        ink: { 950: "#0A1814", 900: "#10241D", 700: "#315047", 500: "#60766E" },
+        forest: { 950: "#07140F", 900: "#0D2B22", 800: "#123A2E", 700: "#18513F" },
+        lime: { 50: "#F8FFE7", 200: "#EBFFAA", 300: "#DCFF72", 400: "#CBF34E", 500: "#B6DF35" },
+        mango: { 100: "#FFF0D7", 400: "#FFB85C", 500: "#F59B2A" },
+        surface: { DEFAULT: "#F4F6F0", raised: "#FBFCF8", muted: "#E9EEE7" },
+        line: "#D9E1D8",
+        danger: { 50: "#FFF0ED", 600: "#BE3D2F" },
       },
       fontFamily: {
         display: ["var(--font-display)", "system-ui", "sans-serif"],
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
         meter: ["var(--font-meter)", "ui-monospace", "monospace"],
       },
-      borderRadius: {
-        md: "6px",
-        lg: "10px",
+      boxShadow: {
+        soft: "0 18px 50px rgba(13, 43, 34, 0.09)",
+        card: "0 10px 30px rgba(13, 43, 34, 0.08)",
+        lift: "0 16px 38px rgba(7, 20, 15, 0.18)",
       },
+      borderRadius: { xl: "1rem", "2xl": "1.5rem", "3xl": "2rem" },
     },
   },
   plugins: [],

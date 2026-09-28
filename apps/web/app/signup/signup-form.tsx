@@ -6,6 +6,8 @@ import { FormEvent, useState } from "react";
 import { postAuth, saveAuthToken } from "@/lib/auth-client";
 import { isValidPhone } from "@/lib/validation";
 import { SeatPicker } from "@/components/seat-picker";
+import { AuthShell } from "@/components/auth-shell";
+import { ArrowRight, Car, Users } from "@/components/icons";
 
 type SignupResponse = {
   token: string;
@@ -90,30 +92,21 @@ export function SignupForm() {
   }
 
   return (
-    <main className="mx-auto flex max-w-md flex-col gap-8 px-4 py-14 sm:py-20">
-      <div>
-        <h1 className="font-display text-4xl uppercase tracking-wide text-ink-900">
-          Create an account
-        </h1>
-        <p className="mt-2 font-sans text-base text-ink-600">
-          Choose how you&apos;ll use Dhaka Tesla Pool.
-        </p>
-      </div>
-
-      <div role="radiogroup" aria-label="Account type" className="flex gap-3">
+    <AuthShell title="Join the pool" description="Create your account, choose your side of the journey, and get moving.">
+      <div role="radiogroup" aria-label="Account type" className="grid grid-cols-2 gap-3">
         <button
           type="button"
           role="radio"
           aria-checked={role === "passenger"}
           onClick={() => setRole("passenger")}
           className={
-            "sticker-card flex-1 border-4 px-4 py-3 font-display text-lg uppercase tracking-wide transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 " +
+            "focus-ring flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition " +
             (role === "passenger"
-              ? "-rotate-1 border-green-500 bg-surface-card text-ink-900"
-              : "rotate-0 border-border bg-surface text-ink-600")
+              ? "border-forest-800 bg-forest-800 text-white shadow-card"
+              : "border-line bg-white text-ink-500")
           }
         >
-          Passenger
+          <Users className={`h-4 w-4 ${role === "passenger" ? "text-lime-300" : ""}`} /> Passenger
         </button>
         <button
           type="button"
@@ -121,32 +114,32 @@ export function SignupForm() {
           aria-checked={role === "driver"}
           onClick={() => setRole("driver")}
           className={
-            "sticker-card flex-1 border-4 px-4 py-3 font-display text-lg uppercase tracking-wide transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 " +
+            "focus-ring flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition " +
             (role === "driver"
-              ? "rotate-1 border-green-500 bg-surface-card text-ink-900"
-              : "rotate-0 border-border bg-surface text-ink-600")
+              ? "border-forest-800 bg-forest-800 text-white shadow-card"
+              : "border-line bg-white text-ink-500")
           }
         >
-          Driver
+          <Car className={`h-4 w-4 ${role === "driver" ? "text-lime-300" : ""}`} /> Driver
         </button>
       </div>
 
       <form
         onSubmit={handleSubmit}
         noValidate
-        className="permit-card flex flex-col gap-5 rounded-b-lg p-6"
+        className="mt-7 flex flex-col gap-5"
       >
         {formError ? (
           <p
             role="alert"
-            className="rounded-md border border-danger-600 bg-danger-50 px-3 py-2 text-sm text-danger-600"
+            className="rounded-xl border border-danger-600/30 bg-danger-50 px-4 py-3 text-sm text-danger-600"
           >
             {formError}
           </p>
         ) : null}
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="name" className="font-sans text-sm font-medium text-ink-900">
+          <label htmlFor="name" className="text-sm font-medium text-ink-900">
             Full name
           </label>
           <input
@@ -158,20 +151,17 @@ export function SignupForm() {
             aria-describedby={fieldErrors.name ? "name-error" : undefined}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className={
-              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
-              (fieldErrors.name ? "border-danger-600" : "border-border")
-            }
+            className={`field ${fieldErrors.name ? "field-error" : ""}`}
           />
           {fieldErrors.name ? (
-            <p id="name-error" className="font-sans text-xs text-danger-600">
+            <p id="name-error" className="text-xs text-danger-600">
               {fieldErrors.name}
             </p>
           ) : null}
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="phone" className="font-sans text-sm font-medium text-ink-900">
+          <label htmlFor="phone" className="text-sm font-medium text-ink-900">
             Phone number
           </label>
           <input
@@ -185,20 +175,17 @@ export function SignupForm() {
             aria-describedby={fieldErrors.phone ? "phone-error" : undefined}
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className={
-              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
-              (fieldErrors.phone ? "border-danger-600" : "border-border")
-            }
+            className={`field ${fieldErrors.phone ? "field-error" : ""}`}
           />
           {fieldErrors.phone ? (
-            <p id="phone-error" className="font-sans text-xs text-danger-600">
+            <p id="phone-error" className="text-xs text-danger-600">
               {fieldErrors.phone}
             </p>
           ) : null}
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="password" className="font-sans text-sm font-medium text-ink-900">
+          <label htmlFor="password" className="text-sm font-medium text-ink-900">
             Password
           </label>
           <input
@@ -210,16 +197,13 @@ export function SignupForm() {
             aria-describedby="password-hint"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className={
-              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
-              (fieldErrors.password ? "border-danger-600" : "border-border")
-            }
+            className={`field ${fieldErrors.password ? "field-error" : ""}`}
           />
           <p
             id="password-hint"
             className={
-              "font-sans text-xs " +
-              (fieldErrors.password ? "text-danger-600" : "text-ink-600")
+              "text-xs " +
+              (fieldErrors.password ? "text-danger-600" : "text-ink-500")
             }
           >
             {fieldErrors.password ?? "At least 8 characters."}
@@ -229,7 +213,7 @@ export function SignupForm() {
         {role === "driver" ? (
           <>
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="vehicleLabel" className="font-sans text-sm font-medium text-ink-900">
+              <label htmlFor="vehicleLabel" className="text-sm font-medium text-ink-900">
                 Vehicle label
               </label>
               <input
@@ -241,20 +225,17 @@ export function SignupForm() {
                 aria-describedby={fieldErrors.vehicleLabel ? "vehicle-error" : undefined}
                 value={vehicleLabel}
                 onChange={(e) => setVehicleLabel(e.target.value)}
-                className={
-                  "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
-                  (fieldErrors.vehicleLabel ? "border-danger-600" : "border-border")
-                }
+                className={`field ${fieldErrors.vehicleLabel ? "field-error" : ""}`}
               />
               {fieldErrors.vehicleLabel ? (
-                <p id="vehicle-error" className="font-sans text-xs text-danger-600">
+                <p id="vehicle-error" className="text-xs text-danger-600">
                   {fieldErrors.vehicleLabel}
                 </p>
               ) : null}
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <span className="font-sans text-sm font-medium text-ink-900">
+              <span className="text-sm font-medium text-ink-900">
                 Seat capacity
               </span>
               <SeatPicker value={capacity} onChange={setCapacity} />
@@ -265,18 +246,18 @@ export function SignupForm() {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="sticker-card -rotate-1 inline-flex items-center justify-center border-4 border-green-500 bg-surface-card px-6 py-3 font-display text-xl uppercase tracking-wide text-ink-900 transition-transform hover:rotate-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+          className="focus-ring mt-1 inline-flex items-center justify-center gap-2 rounded-full bg-forest-900 px-6 py-3.5 text-sm font-semibold text-white transition hover:bg-forest-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isSubmitting ? "Creating account..." : "Create account"}
+          {isSubmitting ? "Creating account..." : <>Create account <ArrowRight className="h-4 w-4" /></>}
         </button>
       </form>
 
-      <p className="font-sans text-sm text-ink-600">
+      <p className="mt-6 text-center text-sm text-ink-500">
         Already have an account?{" "}
-        <Link href={`/login?role=${role}`} className="font-medium text-green-600 underline">
+        <Link href={`/login?role=${role}`} className="font-semibold text-forest-700 underline decoration-lime-400 decoration-2 underline-offset-4">
           Log in
         </Link>
       </p>
-    </main>
+    </AuthShell>
   );
 }

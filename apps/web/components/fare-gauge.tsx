@@ -1,52 +1,36 @@
-// A stylized instrument-panel gauge — the visual anchor of the "CNG meter"
-// direction. Purely a decorative dial face (track, ticks, hub): no needle
-// and no partial fill, since either would read as a live/proportional
-// value it isn't. The digital readout below is the only place a real
-// number appears.
+import { ArrowRight, Car, MapPin, Users } from "@/components/icons";
+
+// This is deliberately a concept card, not a simulated live ride. The MVP
+// does not yet have enough marketplace data to promise ETAs, fares, or matches.
 export function FareGauge() {
   return (
-    <div className="mx-auto w-full max-w-sm sm:mx-0">
-      <svg
-        viewBox="0 0 200 130"
-        className="w-full"
-        role="img"
-        aria-label="Illustration of a fare meter dial"
-      >
-        <path
-          d="M20,110 A80,80 0 0,1 180,110"
-          fill="none"
-          stroke="#DCE3E0"
-          strokeWidth={10}
-          strokeLinecap="round"
-        />
-        {Array.from({ length: 7 }).map((_, i) => {
-          const angle = 180 - i * 30;
-          const rad = (angle * Math.PI) / 180;
-          const x1 = 100 + 68 * Math.cos(rad);
-          const y1 = 110 - 68 * Math.sin(rad);
-          const x2 = 100 + 80 * Math.cos(rad);
-          const y2 = 110 - 80 * Math.sin(rad);
-          return (
-            <line
-              key={angle}
-              x1={x1}
-              y1={y1}
-              x2={x2}
-              y2={y2}
-              stroke="#14181A"
-              strokeWidth={2}
-            />
-          );
-        })}
-        <circle cx={100} cy={110} r={7} fill="#14181A" />
-      </svg>
+    <div className="float-in relative mx-auto w-full max-w-[430px] rounded-3xl border border-white/10 bg-white/[0.08] p-4 shadow-lift backdrop-blur-sm [animation-delay:120ms] sm:p-5">
+      <div className="rounded-2xl bg-surface-raised p-5 text-ink-900 shadow-card sm:p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div><p className="font-meter text-[9px] uppercase tracking-[0.15em] text-ink-500">MVP route setup</p><p className="mt-1 text-lg font-semibold">Tell us your regular commute</p></div>
+          <span className="rounded-full bg-mango-100 px-3 py-1 font-meter text-[8px] font-semibold uppercase tracking-wider text-forest-950">Preview</span>
+        </div>
 
-      <div className="sticker-card meter-tick -mt-3 flex flex-col gap-1 bg-ink-900 px-5 py-4 shadow-md">
-        <span className="font-meter text-[10px] uppercase tracking-wider text-green-50">
-          Example fare &middot; Banani &rarr; Mohakhali
-        </span>
-        <span className="font-meter text-3xl text-white">৳150.00</span>
+        <div className="relative my-7 pl-7">
+          <div className="absolute bottom-3 left-[7px] top-3 border-l-2 border-dashed border-ink-500/30" />
+          <div className="relative mb-4 rounded-xl border border-line bg-white px-4 py-3">
+            <span className="absolute -left-[29px] top-4 h-4 w-4 rounded-full border-4 border-forest-800 bg-lime-300" />
+            <p className="font-meter text-[8px] uppercase tracking-wider text-ink-500">Starting area</p><p className="mt-1 text-sm font-medium text-ink-700">Choose where you usually leave from</p>
+          </div>
+          <div className="relative rounded-xl border border-line bg-white px-4 py-3">
+            <span className="absolute -left-[29px] top-4 h-4 w-4 rounded-full bg-mango-400 ring-4 ring-mango-100" />
+            <p className="font-meter text-[8px] uppercase tracking-wider text-ink-500">Destination</p><p className="mt-1 text-sm font-medium text-ink-700">Add where you need to go</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-xl bg-surface-muted p-4"><Users className="h-4 w-4 text-forest-700"/><p className="mt-3 text-sm font-medium">Ride with others</p><p className="mt-1 text-xs leading-relaxed text-ink-500">Join as a passenger</p></div>
+          <div className="rounded-xl bg-surface-muted p-4"><Car className="h-4 w-4 text-forest-700"/><p className="mt-3 text-sm font-medium">Offer empty seats</p><p className="mt-1 text-xs leading-relaxed text-ink-500">Join as a driver</p></div>
+        </div>
+
+        <div className="mt-5 flex items-center justify-between border-t border-line pt-5"><span className="flex items-center gap-2 text-xs text-ink-500"><MapPin className="h-4 w-4"/>Matching is the next milestone</span><ArrowRight className="h-4 w-4 text-forest-700"/></div>
       </div>
+      <div className="absolute -bottom-5 -left-4 rounded-2xl bg-mango-400 px-4 py-3 text-forest-950 shadow-card sm:-left-8"><p className="font-meter text-[8px] uppercase tracking-wider">Early-stage product</p><p className="font-display text-2xl font-semibold leading-none">Built with commuters</p></div>
     </div>
   );
 }

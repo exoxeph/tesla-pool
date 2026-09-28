@@ -1,64 +1,46 @@
 import Link from "next/link";
+import { CityBackdrop } from "@/components/city-backdrop";
 import { FareGauge } from "@/components/fare-gauge";
+import { ArrowRight, ArrowUpRight, Car, MapPin, Shield, Users } from "@/components/icons";
 import { ZoneStrip } from "@/components/zone-strip";
+
+const FEATURES = [
+  { icon: Users, number: "01", title: "Share your route", copy: "Tell us the commute you repeat and whether you want to ride or drive." },
+  { icon: Car, number: "02", title: "Build the network", copy: "Early members help reveal which shared routes would be genuinely useful." },
+  { icon: Shield, number: "03", title: "Unlock matching", copy: "Real pools appear only as matching and safety features become ready." },
+];
 
 export default function HomePage() {
   return (
-    <main className="mx-auto flex max-w-5xl flex-col gap-16 px-4 py-14 sm:py-20">
-      <div className="grid gap-10 sm:grid-cols-[1.1fr_0.9fr] sm:items-center sm:gap-8">
-        <div>
-          <h1 className="font-display text-5xl uppercase leading-[0.95] tracking-wide text-ink-900 sm:text-6xl">
-            Share a seat.
-            <br />
-            Split the fare.
-            <br />
-            Survive Dhaka traffic.
-          </h1>
-          <p className="mt-5 max-w-[55ch] font-sans text-lg text-ink-600">
-            Dhaka Tesla Pool matches you with passengers heading your way,
-            so you split a real fare instead of paying for the whole ride
-            alone.
-          </p>
-
-          <div className="mt-8 flex flex-col gap-6 sm:flex-row">
-            <Link
-              href="/login?role=passenger"
-              className="sticker-card group inline-flex -rotate-1 flex-col items-start gap-1 border-4 border-green-500 bg-surface-card px-6 py-4 shadow-md transition-transform hover:rotate-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2"
-            >
-              <span className="font-meter text-[10px] uppercase tracking-wider text-green-600">
-                Passenger permit
-              </span>
-              <span className="font-display text-2xl uppercase tracking-wide text-ink-900">
-                Continue as Passenger
-              </span>
-            </Link>
-            <Link
-              href="/login?role=driver"
-              className="sticker-card inline-flex rotate-1 flex-col items-start gap-1 border-2 border-ink-900 bg-surface-card px-6 py-4 shadow-sm transition-transform hover:rotate-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2"
-            >
-              <span className="font-meter text-[10px] uppercase tracking-wider text-ink-600">
-                Driver permit &middot; 3 seats
-              </span>
-              <span className="font-display text-2xl uppercase tracking-wide text-ink-900">
-                Continue as Driver
-              </span>
-            </Link>
+    <main>
+      <section className="noise relative overflow-hidden bg-forest-900 text-white">
+        <div className="absolute bottom-0 right-0 top-0 w-full opacity-80 lg:w-[58%]"><CityBackdrop /></div>
+        <div className="relative mx-auto grid min-h-[680px] max-w-7xl items-center gap-14 px-5 py-16 sm:px-8 sm:py-24 lg:grid-cols-[1.05fr_.95fr] lg:gap-16">
+          <div className="float-in max-w-2xl">
+            <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.07] px-3 py-2 font-meter text-[9px] uppercase tracking-[0.16em] text-white/75"><span className="h-2 w-2 rounded-full bg-lime-300 shadow-[0_0_0_4px_rgba(220,255,114,.13)]"/>Community MVP · Early access</div>
+            <h1 className="display-tight font-display text-[4.7rem] font-semibold uppercase leading-[.8] sm:text-[6.5rem] lg:text-[7.5rem]">Dhaka moves<br/><span className="text-lime-300">better</span> together.</h1>
+            <p className="mt-7 max-w-xl text-lg leading-relaxed text-white/66 sm:text-xl">We&apos;re testing a simpler way for Dhaka commuters to share electric rides. Join early, add your route, and help shape what gets built next.</p>
+            <div className="mt-9 flex flex-col gap-3 sm:flex-row"><Link href="/signup?role=passenger" className="focus-ring inline-flex items-center justify-center gap-3 rounded-full bg-lime-300 px-6 py-4 font-semibold text-forest-950 transition hover:bg-lime-200">Join as a passenger <ArrowRight className="h-5 w-5"/></Link><Link href="/signup?role=driver" className="focus-ring inline-flex items-center justify-center gap-3 rounded-full border border-white/20 bg-white/[0.06] px-6 py-4 font-medium text-white transition hover:bg-white/10">Join as a driver <ArrowUpRight className="h-5 w-5"/></Link></div>
+            <div className="mt-10 flex flex-wrap gap-x-7 gap-y-3 text-sm text-white/55"><span className="flex items-center gap-2"><Shield className="h-4 w-4 text-lime-300"/>MVP scope shown clearly</span><span className="flex items-center gap-2"><MapPin className="h-4 w-4 text-lime-300"/>Built around Dhaka commutes</span></div>
           </div>
-
-          <p className="mt-4 font-sans text-sm text-ink-600">
-            New here?{" "}
-            <Link href="/signup" className="font-medium text-green-600 underline">
-              Sign up
-            </Link>
-          </p>
+          <div className="relative py-8"><FareGauge /></div>
         </div>
+      </section>
 
-        {/* Authored SVG gauge — the direction's signature illustration,
-            not a stock icon or gradient placeholder. */}
-        <FareGauge />
-      </div>
+      <section className="border-b border-line bg-surface-raised">
+        <div className="mx-auto grid max-w-7xl grid-cols-2 divide-x divide-line px-5 sm:grid-cols-4 sm:px-8">
+          {[['01','Create an account'],['02','Choose your role'],['03','Add your route'],['NEXT','Enable matching']].map(([value,label])=><div key={label} className="px-3 py-7 text-center sm:py-9"><p className="font-display text-4xl font-semibold leading-none text-forest-800 sm:text-5xl">{value}</p><p className="mt-1 text-xs text-ink-500">{label}</p></div>)}
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-7xl px-5 py-16 sm:px-8 sm:py-24">
+        <div className="max-w-xl"><p className="font-meter text-[10px] uppercase tracking-[0.2em] text-forest-700">The MVP path</p><h2 className="mt-3 font-display text-5xl font-semibold uppercase leading-[.9] text-ink-950 sm:text-6xl">Start small.<br/>Learn the routes.</h2></div>
+        <div className="mt-12 grid gap-4 md:grid-cols-3">{FEATURES.map(({icon:Icon,number,title,copy},i)=><article key={title} className={`group rounded-3xl border p-6 transition duration-300 hover:-translate-y-1 hover:shadow-soft sm:p-8 ${i===1?"border-forest-800 bg-forest-800 text-white":"border-line bg-surface-raised text-ink-900"}`}><div className="flex items-center justify-between"><span className={`grid h-12 w-12 place-items-center rounded-2xl ${i===1?"bg-lime-300 text-forest-950":"bg-surface-muted text-forest-700"}`}><Icon className="h-5 w-5"/></span><span className={`font-meter text-xs ${i===1?"text-lime-300":"text-ink-500"}`}>{number}</span></div><h3 className="mt-10 text-xl font-semibold">{title}</h3><p className={`mt-2 leading-relaxed ${i===1?"text-white/60":"text-ink-500"}`}>{copy}</p></article>)}</div>
+      </section>
 
       <ZoneStrip />
+
+      <section className="px-5 pb-16 sm:px-8 sm:pb-24"><div className="noise relative mx-auto max-w-7xl overflow-hidden rounded-3xl bg-mango-400 px-6 py-12 text-forest-950 sm:px-12 sm:py-16"><div className="absolute -right-16 -top-28 h-72 w-72 rounded-full border-[45px] border-forest-900/10"/><div className="relative flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between"><div><p className="font-meter text-[10px] uppercase tracking-[.2em]">Join at the beginning</p><h2 className="mt-3 max-w-2xl font-display text-5xl font-semibold uppercase leading-[.88] sm:text-7xl">Add your route.<br/>Shape the MVP.</h2></div><Link href="/signup" className="focus-ring inline-flex shrink-0 items-center justify-center gap-3 self-start rounded-full bg-forest-900 px-7 py-4 font-semibold text-white transition hover:bg-forest-950 lg:self-auto">Create your account <ArrowUpRight className="h-5 w-5"/></Link></div></div></section>
     </main>
   );
 }

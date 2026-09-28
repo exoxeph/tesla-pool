@@ -1,13 +1,18 @@
+import { ArrowRight, MapPin, Users } from "@/components/icons";
+
 export default function DashboardPage() {
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-3 px-4 py-14 sm:py-20">
-      <h1 className="font-display text-4xl uppercase tracking-wide text-ink-900">
-        You&apos;re in
-      </h1>
-      <p className="font-sans text-base text-ink-600">
-        Placeholder dashboard — pooling, matching, and pool status land in a
-        later feature branch.
-      </p>
+    <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8 sm:py-14">
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><p className="font-meter text-[9px] uppercase tracking-[.2em] text-forest-700">Passenger dashboard · MVP</p><h1 className="mt-2 font-display text-5xl font-semibold uppercase leading-none text-ink-950 sm:text-6xl">Start with your route.</h1><p className="mt-3 max-w-xl text-ink-500">Matching is still being built. For now, tell us the commute that would make pooling useful to you.</p></div><div className="flex items-center gap-3 rounded-2xl border border-line bg-surface-raised px-4 py-3 shadow-sm"><span className="grid h-10 w-10 place-items-center rounded-full bg-mango-400 text-sm font-semibold">YP</span><div><p className="text-sm font-semibold">Your account</p><p className="font-meter text-[8px] uppercase tracking-wider text-ink-500">Passenger · Early access</p></div></div></div>
+
+      <section className="route-grid mt-9 overflow-hidden rounded-3xl bg-forest-900 p-5 text-white shadow-lift sm:p-8">
+        <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-end"><div><div className="inline-flex rounded-full border border-white/15 px-3 py-1 font-meter text-[8px] uppercase tracking-wider text-lime-300">Route interest preview</div><h2 className="mt-4 text-2xl font-semibold">What route do you travel most?</h2><p className="mt-2 text-sm text-white/55">This form is a preview of the next MVP milestone; it does not search live rides yet.</p><div className="mt-6 grid gap-3 sm:grid-cols-2"><label className="rounded-2xl bg-white p-4 text-ink-900"><span className="flex items-center gap-2 text-xs font-medium text-ink-500"><span className="h-2.5 w-2.5 rounded-full bg-lime-400 ring-4 ring-lime-400/20"/>Starting area</span><input aria-label="Starting area" placeholder="Add your area" className="mt-2 w-full bg-transparent text-base font-medium outline-none placeholder:text-ink-500"/></label><label className="rounded-2xl bg-white p-4 text-ink-900"><span className="flex items-center gap-2 text-xs font-medium text-ink-500"><MapPin className="h-3.5 w-3.5 text-mango-500"/>Destination</span><input aria-label="Destination" placeholder="Add your destination" className="mt-2 w-full bg-transparent text-base font-medium outline-none placeholder:text-ink-500"/></label></div></div><button disabled title="Route saving is part of the next MVP milestone" className="inline-flex h-14 cursor-not-allowed items-center justify-center gap-2 rounded-full bg-white/10 px-7 font-semibold text-white/50">Saving routes comes next <ArrowRight className="h-4 w-4"/></button></div>
+      </section>
+
+      <div className="mt-10 grid gap-5 md:grid-cols-2">
+        <section className="rounded-3xl border border-line bg-surface-raised p-6 shadow-card sm:p-8"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-surface-muted text-forest-700"><Users className="h-5 w-5"/></span><p className="mt-8 font-meter text-[9px] uppercase tracking-[.18em] text-forest-700">No invented matches</p><h2 className="mt-2 text-2xl font-semibold">Pools will appear when they&apos;re real.</h2><p className="mt-3 leading-relaxed text-ink-500">This space will show available rides after route matching is connected to actual passenger and driver data.</p></section>
+        <section className="rounded-3xl bg-mango-100 p-6 sm:p-8"><span className="font-meter text-[9px] uppercase tracking-[.18em] text-forest-700">What works today</span><h2 className="mt-3 font-display text-4xl font-semibold uppercase leading-[.9]">Create your account.<br/>Choose your role.</h2><p className="mt-4 text-sm leading-relaxed text-ink-700">Passenger and driver onboarding are ready. Ride requests, route matching, and fare sharing remain upcoming milestones.</p></section>
+      </div>
     </main>
   );
 }

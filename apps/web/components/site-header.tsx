@@ -1,24 +1,6 @@
 import Link from "next/link";
+import { ArrowUpRight, LogoMark } from "@/components/icons";
 
 export function SiteHeader() {
-  return (
-    <header className="border-b-4 border-green-500 bg-surface">
-      <div className="mx-auto flex h-16 max-w-5xl items-center px-4">
-        <Link
-          href="/"
-          className="flex items-center gap-3 rounded-md py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2"
-        >
-          <span
-            aria-hidden="true"
-            className="sticker-card -rotate-2 flex h-9 w-9 items-center justify-center bg-green-600 font-meter text-sm font-medium text-white shadow-sm"
-          >
-            DT
-          </span>
-          <span className="font-display text-2xl font-medium uppercase tracking-wide text-ink-900">
-            Dhaka Tesla Pool
-          </span>
-        </Link>
-      </div>
-    </header>
-  );
+  return <header className="relative z-40 border-b border-white/10 bg-forest-900 text-white"><div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between px-5 sm:px-8"><Link href="/" className="focus-ring flex items-center gap-3 rounded-xl" aria-label="Dhaka Tesla Pool home"><LogoMark className="h-10 w-10 text-lime-300"/><span className="leading-none"><span className="block font-display text-[1.35rem] font-semibold uppercase tracking-[0.04em]">Dhaka Tesla</span><span className="block font-meter text-[8px] uppercase tracking-[0.28em] text-lime-300">Pool together · move better</span></span></Link><nav className="flex items-center gap-2" aria-label="Main navigation"><Link href="/login?role=passenger" className="focus-ring hidden rounded-full px-4 py-2 text-sm font-medium text-white/75 transition hover:text-white sm:block">Log in</Link><Link href="/signup" className="focus-ring inline-flex items-center gap-2 rounded-full bg-lime-300 px-4 py-2.5 text-sm font-semibold text-forest-950 transition hover:bg-lime-200">Join the pool <ArrowUpRight className="h-4 w-4"/></Link></nav></div></header>;
 }

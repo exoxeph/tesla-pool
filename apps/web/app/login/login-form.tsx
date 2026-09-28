@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { postAuth, saveAuthToken } from "@/lib/auth-client";
 import { isValidPhone } from "@/lib/validation";
+import { AuthShell } from "@/components/auth-shell";
+import { ArrowRight } from "@/components/icons";
 
 type LoginResponse = {
   token: string;
@@ -63,34 +65,26 @@ export function LoginForm() {
   }
 
   return (
-    <main className="mx-auto flex max-w-md flex-col gap-8 px-4 py-14 sm:py-20">
-      <div>
-        <h1 className="font-display text-4xl uppercase tracking-wide text-ink-900">
-          {role === "driver" ? "Driver login" : "Passenger login"}
-        </h1>
-        <p className="mt-2 font-sans text-base text-ink-600">
-          {role === "driver"
-            ? "Log in to manage your Tesla and its pool."
-            : "Log in to pool a ride across Dhaka."}
-        </p>
+    <AuthShell
+      title={role === "driver" ? "Driver login" : "Welcome back"}
+      description={role === "driver" ? "Sign in to manage your registered vehicle and availability." : "Sign in to access your early passenger account and future route tools."}
+    >
+      <div className="mb-7 grid grid-cols-2 rounded-full bg-surface-muted p-1" aria-label="Login type">
+        <Link href="/login?role=passenger" className={`focus-ring rounded-full px-4 py-2.5 text-center text-sm font-medium transition ${role === "passenger" ? "bg-white text-ink-950 shadow-sm" : "text-ink-500"}`}>Passenger</Link>
+        <Link href="/login?role=driver" className={`focus-ring rounded-full px-4 py-2.5 text-center text-sm font-medium transition ${role === "driver" ? "bg-white text-ink-950 shadow-sm" : "text-ink-500"}`}>Driver</Link>
       </div>
-
-      <form
-        onSubmit={handleSubmit}
-        noValidate
-        className="permit-card flex flex-col gap-5 rounded-b-lg p-6"
-      >
+      <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
         {formError ? (
           <p
             role="alert"
-            className="rounded-md border border-danger-600 bg-danger-50 px-3 py-2 text-sm text-danger-600"
+            className="rounded-xl border border-danger-600/30 bg-danger-50 px-4 py-3 text-sm text-danger-600"
           >
             {formError}
           </p>
         ) : null}
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="phone" className="font-sans text-sm font-medium text-ink-900">
+          <label htmlFor="phone" className="text-sm font-medium text-ink-900">
             Phone number
           </label>
           <input
@@ -104,20 +98,17 @@ export function LoginForm() {
             aria-describedby={fieldErrors.phone ? "phone-error" : undefined}
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className={
-              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
-              (fieldErrors.phone ? "border-danger-600" : "border-border")
-            }
+            className={`field ${fieldErrors.phone ? "field-error" : ""}`}
           />
           {fieldErrors.phone ? (
-            <p id="phone-error" className="font-sans text-xs text-danger-600">
+            <p id="phone-error" className="text-xs text-danger-600">
               {fieldErrors.phone}
             </p>
           ) : null}
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="password" className="font-sans text-sm font-medium text-ink-900">
+          <label htmlFor="password" className="text-sm font-medium text-ink-900">
             Password
           </label>
           <input
@@ -129,13 +120,10 @@ export function LoginForm() {
             aria-describedby={fieldErrors.password ? "password-error" : undefined}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className={
-              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
-              (fieldErrors.password ? "border-danger-600" : "border-border")
-            }
+            className={`field ${fieldErrors.password ? "field-error" : ""}`}
           />
           {fieldErrors.password ? (
-            <p id="password-error" className="font-sans text-xs text-danger-600">
+            <p id="password-error" className="text-xs text-danger-600">
               {fieldErrors.password}
             </p>
           ) : null}
@@ -144,21 +132,20 @@ export function LoginForm() {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="sticker-card -rotate-1 inline-flex items-center justify-center border-4 border-green-500 bg-surface-card px-6 py-3 font-display text-xl uppercase tracking-wide text-ink-900 transition-transform hover:rotate-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+          className="focus-ring mt-1 inline-flex items-center justify-center gap-2 rounded-full bg-forest-900 px-6 py-3.5 text-sm font-semibold text-white transition hover:bg-forest-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isSubmitting ? "Logging in..." : "Log in"}
+          {isSubmitting ? "Logging in..." : <>Log in <ArrowRight className="h-4 w-4" /></>}
         </button>
       </form>
-
-      <p className="font-sans text-sm text-ink-600">
+      <p className="mt-6 text-center text-sm text-ink-500">
         {role === "driver" ? "New driver?" : "New passenger?"}{" "}
         <Link
           href={`/signup?role=${role}`}
-          className="font-medium text-green-600 underline"
+          className="font-semibold text-forest-700 underline decoration-lime-400 decoration-2 underline-offset-4"
         >
           Create an account
         </Link>
       </p>
-    </main>
+    </AuthShell>
   );
 }
