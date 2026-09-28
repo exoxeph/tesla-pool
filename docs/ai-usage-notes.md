@@ -156,6 +156,38 @@ Worth recording for Section 8 as a case where catching an overclaim
 before it reached the evaluator — rather than after — is itself the
 evidence of engineering understanding, not the underlying mistake.
 
+### Bug caught by the design detector, in the AI's own output — thick border on rounded corners (style/ui-refresh)
+
+While extending the CNG-permit direction to the signup/login/driver-
+dashboard cards, a new `.permit-card` pattern was introduced: a 4px
+`border-t` accent stripe on a `rounded-lg` container. Impeccable's
+design-quality hook flagged this after the driver-dashboard edit:
+`border-accent-on-rounded` — a thick straight-edged border genuinely
+creates a visible seam where it meets a rounded corner. This wasn't a
+one-off: the same flawed pattern had already been used identically in
+both the signup and login forms, written earlier in the same pass and
+not yet caught. Fixed all three by squaring the top corners
+(`rounded-b-lg` instead of `rounded-lg`) so the stripe sits flush against
+a straight edge and only the bottom corners curve. `DESIGN.md`, written
+moments earlier, had documented the flawed version as the system's
+canonical pattern — corrected that too, so the reference doesn't
+enshrine a bug.
+
+A second, related finding after the fix: the detector still flagged the
+dashboard's `border-t-4` because its rule is a simple co-occurrence
+match (thick border + any rounding on the same element), not sophisticated
+enough to see that the geometry was already fixed via a per-side
+`rounded-b-*` split. Verified by inspection that no visual clash remained,
+then persisted a narrow `ignore-value` (rule `border-accent-on-rounded`,
+scoped to the one file) with the reasoning on record rather than silently
+suppressing or leaving a stale warning.
+
+Distinct from the phone-normalization and documentation-overclaim entries
+above: this is a bug the AI introduced in its *own* design-refresh work
+and a downstream tool caught before the user did, then triaged correctly
+(real problem fixed everywhere it was duplicated, false-positive
+suppressed narrowly with a documented reason, not broadly).
+
 ### Process note — commit timestamps vs. actual incremental work
 
 `feature/passenger-auth`'s 8 commits were made in two tight clusters
