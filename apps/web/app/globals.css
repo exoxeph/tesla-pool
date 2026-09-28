@@ -45,37 +45,12 @@ body {
   background-size: 18px 18px;
 }
 
-@keyframes gauge-sweep {
-  from {
-    stroke-dashoffset: var(--gauge-empty);
-  }
-  to {
-    stroke-dashoffset: var(--gauge-fill);
-  }
+/* The one way the CNG-permit world extends onto task surfaces (forms, the
+   driver dashboard): a top permit-stripe accent plus the dash-grid
+   texture. Deliberately restrained compared to the homepage's sticker
+   rotation/clip-path — these are Operate-mode surfaces, so the motif
+   lives in one precise detail, not full expression. */
+.permit-card {
+  @apply dash-grid border-t-4 border-t-green-500 bg-surface-card;
 }
 
-.gauge-needle,
-.gauge-fill {
-  animation: gauge-sweep 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-@keyframes gauge-needle-sweep {
-  from {
-    transform: rotate(var(--needle-start));
-  }
-  to {
-    transform: rotate(var(--needle-end));
-  }
-}
-
-.gauge-needle {
-  animation-name: gauge-needle-sweep;
-  transform-origin: var(--needle-origin);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .gauge-needle,
-  .gauge-fill {
-    animation: none;
-  }
-}

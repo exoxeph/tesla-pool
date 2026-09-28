@@ -4,11 +4,14 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { postAuth, saveAuthToken } from "@/lib/auth-client";
+import { isValidPhone } from "@/lib/validation";
 
 type LoginResponse = {
   token: string;
   user: { id: string; name: string; phone: string; role: string };
 };
+
+type FieldErrors = Partial<Record<"phone" | "password", string>>;
 
 export function LoginForm() {
   const router = useRouter();
@@ -18,11 +21,28 @@ export function LoginForm() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
+
+  function validate(): FieldErrors {
+    const errors: FieldErrors = {};
+    if (!isValidPhone(phone)) {
+      errors.phone = "Enter a valid Bangladeshi phone number.";
+    }
+    if (!password) {
+      errors.password = "Password is required.";
+    }
+    return errors;
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(null);
+    setFormError(null);
+
+    const errors = validate();
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
     setIsSubmitting(true);
 
     try {
@@ -33,7 +53,11 @@ export function LoginForm() {
       saveAuthToken(data.token);
       router.push(data.user.role === "DRIVER" ? "/driver/dashboard" : "/dashboard");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      // A wrong phone/password combo is a server-verified fact (not a
+      // format problem), so it surfaces here rather than as a field error.
+      setFormError(
+        err instanceof Error ? err.message : "Couldn't reach the server. Check your connection and try again."
+      );
       setIsSubmitting(false);
     }
   }
@@ -54,14 +78,14 @@ export function LoginForm() {
       <form
         onSubmit={handleSubmit}
         noValidate
-        className="flex flex-col gap-5 rounded-lg border border-border bg-surface-card p-6"
+        className="permit-card flex flex-col gap-5 rounded-b-lg p-6"
       >
-        {error ? (
+        {formError ? (
           <p
             role="alert"
             className="rounded-md border border-danger-600 bg-danger-50 px-3 py-2 text-sm text-danger-600"
           >
-            {error}
+            {formError}
           </p>
         ) : null}
 
@@ -76,11 +100,20 @@ export function LoginForm() {
             inputMode="numeric"
             autoComplete="tel"
             placeholder="01XXXXXXXXX"
-            required
+            aria-invalid={Boolean(fieldErrors.phone)}
+            aria-describedby={fieldErrors.phone ? "phone-error" : undefined}
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="rounded-md border border-border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600"
+            className={
+              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
+              (fieldErrors.phone ? "border-danger-600" : "border-border")
+            }
           />
+          {fieldErrors.phone ? (
+            <p id="phone-error" className="font-sans text-xs text-danger-600">
+              {fieldErrors.phone}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -92,11 +125,20 @@ export function LoginForm() {
             name="password"
             type="password"
             autoComplete="current-password"
-            required
+            aria-invalid={Boolean(fieldErrors.password)}
+            aria-describedby={fieldErrors.password ? "password-error" : undefined}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded-md border border-border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600"
+            className={
+              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
+              (fieldErrors.password ? "border-danger-600" : "border-border")
+            }
           />
+          {fieldErrors.password ? (
+            <p id="password-error" className="font-sans text-xs text-danger-600">
+              {fieldErrors.password}
+            </p>
+          ) : null}
         </div>
 
         <button

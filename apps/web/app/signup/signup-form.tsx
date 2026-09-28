@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { postAuth, saveAuthToken } from "@/lib/auth-client";
+import { isValidPhone } from "@/lib/validation";
+import { SeatPicker } from "@/components/seat-picker";
 
 type SignupResponse = {
   token: string;
@@ -15,6 +17,9 @@ type DriverSignupResponse = SignupResponse & {
 };
 
 type Role = "passenger" | "driver";
+type FieldErrors = Partial<
+  Record<"name" | "phone" | "password" | "vehicleLabel", string>
+>;
 
 export function SignupForm() {
   const router = useRouter();
@@ -27,13 +32,34 @@ export function SignupForm() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [vehicleLabel, setVehicleLabel] = useState("");
-  const [capacity, setCapacity] = useState("3");
+  const [capacity, setCapacity] = useState(3);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
+
+  function validate(): FieldErrors {
+    const errors: FieldErrors = {};
+    if (!name.trim()) errors.name = "Name is required.";
+    if (!isValidPhone(phone)) {
+      errors.phone = "Enter a valid Bangladeshi phone number.";
+    }
+    if (password.length < 8) {
+      errors.password = "Password must be at least 8 characters.";
+    }
+    if (role === "driver" && !vehicleLabel.trim()) {
+      errors.vehicleLabel = "Vehicle label is required.";
+    }
+    return errors;
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(null);
+    setFormError(null);
+
+    const errors = validate();
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
     setIsSubmitting(true);
 
     try {
@@ -48,19 +74,17 @@ export function SignupForm() {
       } else {
         const data = await postAuth<DriverSignupResponse>(
           "/auth/driver-signup",
-          {
-            name,
-            phone,
-            password,
-            vehicleLabel,
-            capacity: Number(capacity),
-          }
+          { name, phone, password, vehicleLabel, capacity }
         );
         saveAuthToken(data.token);
         router.push("/driver/dashboard");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      // Only network/server-level failures reach here — field-level
+      // problems are already caught above without a round trip.
+      setFormError(
+        err instanceof Error ? err.message : "Couldn't reach the server. Check your connection and try again."
+      );
       setIsSubmitting(false);
     }
   }
@@ -110,14 +134,14 @@ export function SignupForm() {
       <form
         onSubmit={handleSubmit}
         noValidate
-        className="flex flex-col gap-5 rounded-lg border border-border bg-surface-card p-6"
+        className="permit-card flex flex-col gap-5 rounded-b-lg p-6"
       >
-        {error ? (
+        {formError ? (
           <p
             role="alert"
             className="rounded-md border border-danger-600 bg-danger-50 px-3 py-2 text-sm text-danger-600"
           >
-            {error}
+            {formError}
           </p>
         ) : null}
 
@@ -130,11 +154,20 @@ export function SignupForm() {
             name="name"
             type="text"
             autoComplete="name"
-            required
+            aria-invalid={Boolean(fieldErrors.name)}
+            aria-describedby={fieldErrors.name ? "name-error" : undefined}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="rounded-md border border-border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600"
+            className={
+              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
+              (fieldErrors.name ? "border-danger-600" : "border-border")
+            }
           />
+          {fieldErrors.name ? (
+            <p id="name-error" className="font-sans text-xs text-danger-600">
+              {fieldErrors.name}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -148,11 +181,20 @@ export function SignupForm() {
             inputMode="numeric"
             autoComplete="tel"
             placeholder="01XXXXXXXXX"
-            required
+            aria-invalid={Boolean(fieldErrors.phone)}
+            aria-describedby={fieldErrors.phone ? "phone-error" : undefined}
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="rounded-md border border-border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600"
+            className={
+              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
+              (fieldErrors.phone ? "border-danger-600" : "border-border")
+            }
           />
+          {fieldErrors.phone ? (
+            <p id="phone-error" className="font-sans text-xs text-danger-600">
+              {fieldErrors.phone}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -164,13 +206,24 @@ export function SignupForm() {
             name="password"
             type="password"
             autoComplete="new-password"
-            minLength={8}
-            required
+            aria-invalid={Boolean(fieldErrors.password)}
+            aria-describedby="password-hint"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded-md border border-border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600"
+            className={
+              "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
+              (fieldErrors.password ? "border-danger-600" : "border-border")
+            }
           />
-          <p className="font-sans text-xs text-ink-600">At least 8 characters.</p>
+          <p
+            id="password-hint"
+            className={
+              "font-sans text-xs " +
+              (fieldErrors.password ? "text-danger-600" : "text-ink-600")
+            }
+          >
+            {fieldErrors.password ?? "At least 8 characters."}
+          </p>
         </div>
 
         {role === "driver" ? (
@@ -184,29 +237,27 @@ export function SignupForm() {
                 name="vehicleLabel"
                 type="text"
                 placeholder="e.g. Bullet"
-                required
+                aria-invalid={Boolean(fieldErrors.vehicleLabel)}
+                aria-describedby={fieldErrors.vehicleLabel ? "vehicle-error" : undefined}
                 value={vehicleLabel}
                 onChange={(e) => setVehicleLabel(e.target.value)}
-                className="rounded-md border border-border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600"
+                className={
+                  "rounded-md border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 " +
+                  (fieldErrors.vehicleLabel ? "border-danger-600" : "border-border")
+                }
               />
+              {fieldErrors.vehicleLabel ? (
+                <p id="vehicle-error" className="font-sans text-xs text-danger-600">
+                  {fieldErrors.vehicleLabel}
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="capacity" className="font-sans text-sm font-medium text-ink-900">
+              <span className="font-sans text-sm font-medium text-ink-900">
                 Seat capacity
-              </label>
-              <input
-                id="capacity"
-                name="capacity"
-                type="number"
-                min={1}
-                max={6}
-                required
-                value={capacity}
-                onChange={(e) => setCapacity(e.target.value)}
-                className="rounded-md border border-border bg-surface px-3 py-2 font-sans text-base text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600"
-              />
-              <p className="font-sans text-xs text-ink-600">1 to 6 seats.</p>
+              </span>
+              <SeatPicker value={capacity} onChange={setCapacity} />
             </div>
           </>
         ) : null}
