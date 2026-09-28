@@ -3,16 +3,16 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-const DHAKA_ZONES = [
-  "Banani",
-  "Gulshan 1",
-  "Gulshan 2",
-  "Mohakhali",
-  "Dhanmondi",
-  "Mirpur",
-  "Uttara",
-  "Farmgate",
-  "Bashundhara",
+const DHAKA_ZONES: { name: string; lat: number; lng: number }[] = [
+  { name: "Banani", lat: 23.793993, lng: 90.404272 },
+  { name: "Gulshan 1", lat: 23.797911, lng: 90.414391 },
+  { name: "Gulshan 2", lat: 23.7925, lng: 90.4078 },
+  { name: "Mohakhali", lat: 23.777628, lng: 90.405449 },
+  { name: "Dhanmondi", lat: 23.746466, lng: 90.376015 },
+  { name: "Mirpur", lat: 23.82235, lng: 90.365417 },
+  { name: "Uttara", lat: 23.872839, lng: 90.396028 },
+  { name: "Farmgate", lat: 23.756107, lng: 90.387196 },
+  { name: "Bashundhara", lat: 23.814311, lng: 90.437596 },
 ];
 
 const DEMO_PASSWORD = "password123";
@@ -21,11 +21,11 @@ async function main() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
 
   const zones = new Map<string, string>();
-  for (const name of DHAKA_ZONES) {
+  for (const { name, lat, lng } of DHAKA_ZONES) {
     const zone = await prisma.zone.upsert({
       where: { name },
-      update: {},
-      create: { name },
+      update: { lat, lng },
+      create: { name, lat, lng },
     });
     zones.set(name, zone.id);
   }
