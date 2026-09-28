@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { authedFetch, getAuthToken } from "@/lib/auth-client";
+import { SeatPicker } from "@/components/seat-picker";
 
 type Tesla = {
   id: string;
@@ -28,7 +29,11 @@ export default function DriverDashboardPage() {
     authedFetch<{ tesla: Tesla }>("/drivers/me")
       .then((data) => setTesla(data.tesla))
       .catch((err) => {
-        setLoadError(err instanceof Error ? err.message : "Failed to load.");
+        setLoadError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't reach the server. Check your connection and try again."
+        );
       })
       .finally(() => setIsLoading(false));
   }, [router]);
@@ -45,7 +50,11 @@ export default function DriverDashboardPage() {
       });
       setTesla(data.tesla);
     } catch (err) {
-      setToggleError(err instanceof Error ? err.message : "Something went wrong.");
+      setToggleError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't update your status. Check your connection and try again."
+      );
     } finally {
       setIsToggling(false);
     }
@@ -57,9 +66,8 @@ export default function DriverDashboardPage() {
         <h1 className="font-display text-4xl uppercase tracking-wide text-ink-900">
           Driver dashboard
         </h1>
-        <p className="mt-2 font-sans text-base text-ink-600">
-          Placeholder dashboard — matching and pool status land in a later
-          feature branch.
+        <p className="mt-2 font-meter text-[10px] uppercase tracking-wider text-ink-600">
+          Placeholder — matching and pool status land in a later feature branch
         </p>
       </div>
 
@@ -73,7 +81,12 @@ export default function DriverDashboardPage() {
           {loadError}
         </p>
       ) : tesla ? (
-        <div className="flex flex-col gap-5 rounded-lg border border-border bg-surface-card p-6">
+        <div
+          className={
+            "dash-grid flex flex-col gap-5 rounded-b-lg border-t-4 bg-surface-card p-6 transition-colors " +
+            (tesla.isOnline ? "border-t-green-600" : "border-t-ink-900")
+          }
+        >
           <div>
             <p className="font-meter text-[10px] uppercase tracking-wider text-ink-600">
               Your vehicle
@@ -81,9 +94,9 @@ export default function DriverDashboardPage() {
             <p className="font-display text-3xl uppercase tracking-wide text-ink-900">
               {tesla.label}
             </p>
-            <p className="font-sans text-sm text-ink-600">
-              {tesla.capacity} seat{tesla.capacity === 1 ? "" : "s"}
-            </p>
+            <div className="mt-2">
+              <SeatPicker value={tesla.capacity} readOnly />
+            </div>
           </div>
 
           {toggleError ? (
@@ -95,30 +108,42 @@ export default function DriverDashboardPage() {
             </p>
           ) : null}
 
-          <div className="flex items-center justify-between gap-4">
-            <span className="font-sans text-sm font-medium text-ink-900">
-              Status:{" "}
-              <span className={tesla.isOnline ? "text-green-600" : "text-ink-600"}>
-                {tesla.isOnline ? "Online" : "Offline"}
-              </span>
-            </span>
-            <button
-              type="button"
-              onClick={handleToggle}
-              disabled={isToggling}
-              className={
-                "sticker-card -rotate-1 inline-flex items-center justify-center border-4 px-5 py-2 font-display text-base uppercase tracking-wide transition-transform hover:rotate-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 " +
-                (tesla.isOnline
-                  ? "border-ink-900 bg-surface text-ink-900"
-                  : "border-green-500 bg-surface-card text-ink-900")
-              }
-            >
-              {isToggling
-                ? "Updating..."
-                : tesla.isOnline
-                  ? "Go offline"
-                  : "Go online"}
-            </button>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <span className="font-sans text-sm font-medium text-ink-900">
+                  Status:{" "}
+                  <span className={tesla.isOnline ? "text-green-600" : "text-ink-600"}>
+                    {tesla.isOnline ? "Online" : "Offline"}
+                  </span>
+                </span>
+                {tesla.isOnline ? (
+                  <p
+                    key="online-confirm"
+                    className="meter-tick font-meter text-[10px] uppercase tracking-wider text-green-600"
+                  >
+                    Visible to riders now
+                  </p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={handleToggle}
+                disabled={isToggling}
+                className={
+                  "sticker-card -rotate-1 inline-flex items-center justify-center border-4 px-5 py-2 font-display text-base uppercase tracking-wide transition-transform hover:rotate-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 " +
+                  (tesla.isOnline
+                    ? "border-ink-900 bg-surface text-ink-900"
+                    : "border-green-500 bg-surface-card text-ink-900")
+                }
+              >
+                {isToggling
+                  ? "Updating..."
+                  : tesla.isOnline
+                    ? "Go offline"
+                    : "Go online"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
