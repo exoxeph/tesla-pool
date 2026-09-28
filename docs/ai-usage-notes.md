@@ -125,6 +125,37 @@ the simplest correct answer took explicit comparison of alternatives
 first, not just picking the "smart-sounding" option (Haversine, graph
 search) by default.
 
+### Documentation-accuracy defect caught by user — causal overclaim in geography-and-matching.md (feature/geography-zones)
+
+`docs/geography-and-matching.md`'s worked example originally said the
+matching-rule calculation "matches the seed data, which already has them
+sharing Jashim's pool" — phrasing that implied the new matching rule
+(`zonesAreCompatible()`) produced Nusrat and Rafiq's pool grouping. It
+didn't: that grouping was hand-authored directly in the seed script
+during earlier scaffold work, before this branch's matching logic
+existed. `zonesAreCompatible()` was never called to produce it — the
+branch only proves the rule *agrees with* a pre-existing, manually
+authored assignment, not that it generated one.
+
+This is a documentation-accuracy defect, distinct in kind from the phone-
+normalization bug above: that was a code defect (wrong runtime behavior);
+this was a *claim* in prose that overstated what the code actually does,
+while the code itself was correct the whole time. The user caught the
+contradiction by comparing the doc's line against a plain-language
+summary given in the same conversation ("doesn't actually match anyone
+yet" vs. "already has them sharing Jashim's pool") and asked for the
+actual seed data to be checked before either side got "fixed." Checking
+confirmed the Pool does exist (so the doc wasn't strictly false) but the
+causal implication was wrong — fixed by naming precisely what the
+calculation demonstrates (agreement with existing data) versus what it
+doesn't do yet (generate new pool assignments via a live endpoint — that
+remains a real, explicitly named gap for `feature/ride-request`/
+`feature/tesla-pooling`).
+
+Worth recording for Section 8 as a case where catching an overclaim
+before it reached the evaluator — rather than after — is itself the
+evidence of engineering understanding, not the underlying mistake.
+
 ### Process note — commit timestamps vs. actual incremental work
 
 `feature/passenger-auth`'s 8 commits were made in two tight clusters
