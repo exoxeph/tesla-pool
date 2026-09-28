@@ -1,11 +1,8 @@
-import type { CSSProperties } from "react";
-
 // A stylized instrument-panel gauge — the visual anchor of the "CNG meter"
-// direction. Decorative dial (like a car speedometer icon), not a data
-// chart: the needle position carries no numeric claim, only the digital
-// readout below states an actual fact (a real seeded fare).
-const TRACK_LENGTH = 251.33; // pi * radius(80), the semicircle arc length
-
+// direction. Purely a decorative dial face (track, ticks, hub): no needle
+// and no partial fill, since either would read as a live/proportional
+// value it isn't. The digital readout below is the only place a real
+// number appears.
 export function FareGauge() {
   return (
     <div className="mx-auto w-full max-w-sm sm:mx-0">
@@ -21,21 +18,6 @@ export function FareGauge() {
           stroke="#DCE3E0"
           strokeWidth={10}
           strokeLinecap="round"
-        />
-        <path
-          className="gauge-fill"
-          d="M20,110 A80,80 0 0,1 180,110"
-          fill="none"
-          stroke="#0B6B2E"
-          strokeWidth={10}
-          strokeLinecap="round"
-          strokeDasharray={TRACK_LENGTH}
-          style={
-            {
-              "--gauge-empty": TRACK_LENGTH,
-              "--gauge-fill": TRACK_LENGTH * 0.36,
-            } as CSSProperties
-          }
         />
         {Array.from({ length: 7 }).map((_, i) => {
           const angle = 180 - i * 30;
@@ -56,23 +38,6 @@ export function FareGauge() {
             />
           );
         })}
-        <line
-          className="gauge-needle"
-          x1={100}
-          y1={110}
-          x2={100}
-          y2={38}
-          stroke="#FFB100"
-          strokeWidth={4}
-          strokeLinecap="round"
-          style={
-            {
-              "--needle-start": "-90deg",
-              "--needle-end": "25deg",
-              "--needle-origin": "100px 110px",
-            } as CSSProperties
-          }
-        />
         <circle cx={100} cy={110} r={7} fill="#14181A" />
       </svg>
 
