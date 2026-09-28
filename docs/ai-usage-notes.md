@@ -70,6 +70,61 @@ to "engineering understanding" scoring: shows the AI's outputs were
 checked against ground truth (`git diff`, `grep`) before being reported as
 fact, not just trusted from a prior summary.
 
+### Reasoning refined through iteration — geography/matching design (feature/geography-zones)
+
+This is the clearest "the first workable answer wasn't the simplest one"
+example in the project, worth recording as it actually happened rather
+than just the final answer:
+
+**Initial draft plan** (before implementation): use the Haversine formula
+for distance (the textbook-correct choice for lat/lng distance, since it
+accounts for Earth's curvature), a single combined distance threshold
+covering both pickup and destination compatibility, and an open question
+of whether graph algorithms (BFS/DFS/A*) were relevant to the passenger-
+matching problem at all, since "matching" sounds adjacent to "routing."
+
+**What changed and why:**
+
+- **Haversine → equirectangular.** Worked through the actual trade-off:
+  Haversine's curvature correction only matters at distances where the
+  Earth stops looking flat — hundreds of km. Every comparison in this app
+  happens within a single city, a few km across. At that scale the two
+  formulas agree to a negligible fraction of a percent, so Haversine's
+  extra trigonometry (`atan2`, half-angle `sin²` terms) bought no real
+  accuracy for the added complexity. Equirectangular is simpler *and*
+  produces numbers a reviewer can check by hand in a spreadsheet — a
+  genuine, checkable simplification rather than a shortcut.
+- **One threshold → two.** A single combined pickup+destination distance
+  was the initial framing, but pickup and destination don't represent
+  the same tolerance: a shared pickup requires someone to physically walk
+  to a meeting point, while a shared destination only needs the vehicle's
+  route to make sense. Splitting into `PICKUP_THRESHOLD_KM = 1.5` and
+  `DESTINATION_THRESHOLD_KM = 3` encodes that difference explicitly
+  instead of averaging it away.
+- **BFS/DFS/A* ruled out, explicitly, not just skipped.** These solve
+  shortest-path-through-a-network problems (routing a car through actual
+  streets). Zone compatibility asks a different question — "how far
+  apart, as the crow flies, are two points" — which is a pure distance
+  measurement, not a route. Reaching for graph search would mean building
+  and maintaining a real road-network graph of Dhaka, which is exactly
+  the routing-API rebuild this assessment's scope says to avoid. This
+  wasn't dismissed by default; it was considered and rejected on the
+  grounds that it solves the wrong problem.
+- **Driver location: decided not to model it at all**, rather than
+  modeling it partially (e.g. a rough driver zone with looser matching).
+  Partial modeling would have created a feature that looks like it does
+  something it doesn't (driver-aware matching) without actually doing it
+  correctly. Full omission, documented as a deliberate simplification in
+  `docs/geography-and-matching.md`, is more honest than a half-built
+  version of driver-location matching landing in a later branch anyway.
+
+Why this is Section 8 material rather than a single accepted/rejected
+line: none of the individual pivots (formula, thresholds, ruling out
+graph search) were the point on their own — the point is that getting to
+the simplest correct answer took explicit comparison of alternatives
+first, not just picking the "smart-sounding" option (Haversine, graph
+search) by default.
+
 ### Process note — commit timestamps vs. actual incremental work
 
 `feature/passenger-auth`'s 8 commits were made in two tight clusters
