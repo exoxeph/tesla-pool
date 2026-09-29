@@ -86,8 +86,8 @@ export async function cancelRideRequest(
   if (request.passengerId !== passengerId) {
     throw new HttpError(403, "Forbidden");
   }
-  if (request.status !== "REQUESTED") {
-    throw new HttpError(409, "Only a requested ride can be cancelled");
+  if (!isValidTransition(request.status, "CANCELLED")) {
+    throw new HttpError(409, "This ride can no longer be cancelled");
   }
 
   const cancelled = await prisma.rideRequest.update({
