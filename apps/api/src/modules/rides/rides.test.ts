@@ -100,7 +100,9 @@ describe("POST /rides/request", () => {
       status: "REQUESTED",
       poolId: null,
     });
-    expect(typeof res.body.request.farePaisa).toBe("number");
+    // Fare scales with seats: 5731 (1-seat fare for this pair, see the
+    // hand-computed test below) * 2 seats = 11462.
+    expect(res.body.request.farePaisa).toBe(11462);
     expect(rideRequests).toHaveLength(1);
     expect(rideRequests[0].passengerId).toBe("passenger-1");
   });

@@ -46,7 +46,9 @@ export async function createRideRequest(
     { lat: pickupZone.lat!, lng: pickupZone.lng! },
     { lat: destinationZone.lat!, lng: destinationZone.lng! }
   );
-  const farePaisa = estimateFarePaisa(distanceKm);
+  // Fare scales with seats: each seat is a ticket on this shared trip, not
+  // a flat per-request charge — 3 seats costs 3x what 1 seat costs.
+  const farePaisa = estimateFarePaisa(distanceKm) * input.seats;
 
   const request = await prisma.rideRequest.create({
     data: {

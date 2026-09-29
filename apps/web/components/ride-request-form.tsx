@@ -51,8 +51,9 @@ export function RideRequestForm({ onCreated }: { onCreated: () => void }) {
     if (!pickup || !destination) return null;
 
     const distanceKm = equirectangularDistanceKm(pickup, destination);
-    return estimateFarePaisa(distanceKm);
-  }, [zones, pickupZoneId, destinationZoneId, isSameZone]);
+    // Mirrors the backend: fare scales with seats, not a flat per-request charge.
+    return estimateFarePaisa(distanceKm) * seats;
+  }, [zones, pickupZoneId, destinationZoneId, isSameZone, seats]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
