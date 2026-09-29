@@ -276,6 +276,37 @@ claiming a fix is complete after testing only the backend, when the bug
 was also visible in a second, independent frontend code path, is exactly
 the kind of gap a "looks done" report can hide.
 
+### User caught a gap in their own original spec — fare didn't scale with seats (feature/ride-request)
+
+The original brief specified `estimateFarePaisa(distanceKm: number): number`
+— deliberately one parameter, no `seats`. Built faithfully to that
+signature, so `farePaisa` was the same whether a passenger requested 1
+seat or 6: a flat per-request charge, not a per-seat one. This was not a
+coding error; it matched exactly what was asked.
+
+The user asked directly: "if a passenger requests more than one seat,
+shouldn't the price increase?" Before changing anything, confirmed this
+against the actual original commit (`estimateFarePaisa`'s real
+signature) rather than assuming — it genuinely was spec'd as distance-only.
+Presented it as a real product decision with three options (flat,
+multiply-by-seats, or a partial per-extra-seat surcharge) via a
+structured question rather than picking one, since it changes real
+charged amounts and was the user's call to make, not an obvious bug fix.
+The user chose multiply-by-seats.
+
+Implemented as `estimateFarePaisa(distanceKm) * seats` on both the
+backend (the actual charge) and the frontend's live preview (kept in
+sync deliberately, given the same-zone bug immediately before this was
+caused by exactly that kind of frontend/backend drift). Verified live:
+2 seats on Banani→Mohakhali returned exactly `11462` paisa (5731 × 2), 3
+seats returned `17193` (5731 × 3).
+
+Worth recording distinctly from the paisa-over-taka entry above: that one
+was a decision made *before* any code existed; this one is the user
+reviewing a decision already shipped, spotting a real gap in their own
+earlier instruction, and directing the fix — a different, later kind of
+product ownership worth showing for Section 8.
+
 ### Process note — commit timestamps vs. actual incremental work
 
 `feature/passenger-auth`'s 8 commits were made in two tight clusters
