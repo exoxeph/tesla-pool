@@ -335,3 +335,45 @@ export async function listOwnDriverRideRequests(driverUserId: string) {
   });
   return requests.map(toPublicRideRequest);
 }
+
+// Driver-facing: the full passenger list per pool, not a flat list of
+// individual rides — this is what actually shows a driver that a pool is
+// shared, since listOwnDriverRideRequests (above) only gives one flat
+// list with no grouping.
+export async function listOwnPoolsWithPassengers(driverUserId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+
+  const pools = await prisma.pool.findMany({
+    where: { teslaId: tesla.id },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return Promise.all(
+    pools.map(async (pool) => {
+      const requests = await prisma.rideRequest.findMany({
+        where: { poolId: pool.id },
+        orderBy: { createdAt: "asc" },
+        include: { passenger: true },
+      });
+
+      return {
+        id: pool.id,
+        status: pool.status,
+        seatsTaken: pool.seatsTaken,
+        capacity: tesla.capacity,
+        passengers: requests.map((r) => ({
+          requestId: r.id,
+          passengerName: r.passenger.name,
+          pickupZoneId: r.pickupZoneId,
+          destinationZoneId: r.destinationZoneId,
+          seats: r.seats,
+          status: r.status,
+          farePaisa: r.farePaisa,
+        })),
+      };
+    })
+  );
+}

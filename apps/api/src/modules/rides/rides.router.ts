@@ -10,6 +10,7 @@ import {
   createRideRequest,
   listAvailableRideRequests,
   listOwnDriverRideRequests,
+  listOwnPoolsWithPassengers,
   listOwnRideRequests,
   markDriverArrived,
   startRide,
@@ -107,5 +108,15 @@ ridesRouter.patch(
   asyncHandler(async (req, res) => {
     const request = await completeRide(req.auth!.sub, req.params.id);
     res.json({ request });
+  })
+);
+
+ridesRouter.get(
+  "/rides/pools/mine",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (req, res) => {
+    const pools = await listOwnPoolsWithPassengers(req.auth!.sub);
+    res.json({ pools });
   })
 );
