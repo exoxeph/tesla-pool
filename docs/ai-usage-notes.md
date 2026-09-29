@@ -387,3 +387,59 @@ declaring the branch ready:
    that's easy to build correctly and still forget to test when an
    endpoint gets added as a side effect of building a UI, rather than
    from the spec's own test list.
+
+### Overlooked entirely on first pass — concurrency races in every status-mutating ride endpoint
+
+Caught by the user asking directly "if two drivers accepted one request
+at the same time, what would happen?" — not something I flagged, checked
+for, or tested while building or verifying `feature/ride-lifecycle`. On
+inspection every status-mutating function I wrote
+(`cancelRideRequest`, `acceptRideRequest`, `markDriverArrived`,
+`startRide`, `completeRide`) shared the same flaw: read the current
+status, validate it in application code, then write with an
+unconditional `update({ where: { id } })`. None of them re-checked
+status *inside* the write itself, so two concurrent calls that both read
+before either wrote could both pass validation and race to write —
+whichever landed last would silently win, with no error to the loser.
+
+Concretely, before the fix in this entry:
+
+- Two drivers could both `accept` the same request; the losing driver's
+  API call would return `200` with their own pool id, even though the
+  database actually assigned the request to the other driver's pool —
+  a lie told to the losing driver's app.
+- A passenger cancelling at the same moment a driver called `/start`
+  (or any other action) could race the same way — the request could
+  end up `STARTED` with a `LOCKED` pool the passenger believes they
+  cancelled, or `CANCELLED` while the driver's app shows them mid-trip.
+- `acceptRideRequest` created a `Pool` row *before* the conditional
+  write; a driver who lost the accept race left an orphaned pool behind
+  with no request ever actually linked to it.
+- `startRide` and `completeRide` wrote to `RideRequest` and `Pool` as
+  two independent calls (`Promise.all`, not a transaction) — a dropped
+  write between them could leave a request marked `STARTED` while its
+  pool was still `OPEN`, or the reverse.
+
+None of my own tests caught this because every test — and the live
+walkthrough I did before calling the branch "verified" — awaited each
+call strictly in sequence. Nothing in what I built or ran ever put two
+requests genuinely in flight at once, which is the only way any of this
+triggers. That's a real blind spot in how I verified this branch, not
+just a missing edge case: I confirmed the happy path and the sequential
+error cases, and reported the branch as live-tested, without asking
+whether "live-tested sequentially" was sufficient for endpoints that
+exist specifically because multiple independent actors (two drivers, a
+driver and a passenger) can act on the same resource at once.
+
+Fixed by replacing every unconditional `update` with a conditional
+`updateMany({ where: { id, status: <status just read> } })` and checking
+`result.count === 1` before treating the transition as having happened —
+this makes the read-validate-write sequence atomic at the database
+level instead of at the application level, so a losing caller gets a
+clean 409 instead of silently overwriting or being overwritten. The
+multi-table writes in `acceptRideRequest` (pool create + conditional
+link) and `startRide`/`completeRide` (request update + pool update) were
+each wrapped in `prisma.$transaction` so they commit or roll back
+together — a losing accept's pool is now rolled back automatically
+instead of orphaned, and a request's status and its pool's status can
+no longer land in different transactions.
