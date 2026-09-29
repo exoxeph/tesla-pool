@@ -6,10 +6,13 @@ import { createRideRequestSchema } from "./rides.schema";
 import {
   acceptRideRequest,
   cancelRideRequest,
+  completeRide,
   createRideRequest,
   listAvailableRideRequests,
   listOwnDriverRideRequests,
   listOwnRideRequests,
+  markDriverArrived,
+  startRide,
 } from "./rides.service";
 
 export const ridesRouter = Router();
@@ -73,6 +76,36 @@ ridesRouter.post(
   requireRole("DRIVER"),
   asyncHandler(async (req, res) => {
     const request = await acceptRideRequest(req.auth!.sub, req.params.id);
+    res.json({ request });
+  })
+);
+
+ridesRouter.patch(
+  "/rides/:id/driver-arrived",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (req, res) => {
+    const request = await markDriverArrived(req.auth!.sub, req.params.id);
+    res.json({ request });
+  })
+);
+
+ridesRouter.patch(
+  "/rides/:id/start",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (req, res) => {
+    const request = await startRide(req.auth!.sub, req.params.id);
+    res.json({ request });
+  })
+);
+
+ridesRouter.patch(
+  "/rides/:id/complete",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (req, res) => {
+    const request = await completeRide(req.auth!.sub, req.params.id);
     res.json({ request });
   })
 );

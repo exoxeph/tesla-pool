@@ -135,6 +135,76 @@ export async function acceptRideRequest(driverUserId: string, requestId: string)
   return toPublicRideRequest(updated);
 }
 
+// Shared by driver-arrived/start/complete: loads the request's pool and
+// tesla, and confirms this driver owns that tesla before allowing any
+// state change — the same "identity from req.auth, ownership checked
+// against the resource" pattern as drivers.service.ts's getOwnTesla.
+async function loadOwnedRequest(driverUserId: string, requestId: string) {
+  const request = await prisma.rideRequest.findUnique({
+    where: { id: requestId },
+  });
+  if (!request) {
+    throw new HttpError(404, "Ride request not found");
+  }
+  if (!request.poolId) {
+    throw new HttpError(409, "This request has not been accepted yet");
+  }
+
+  const pool = await prisma.pool.findUnique({ where: { id: request.poolId } });
+  if (!pool) {
+    throw new HttpError(404, "Pool not found");
+  }
+
+  const tesla = await prisma.tesla.findUnique({ where: { id: pool.teslaId } });
+  if (!tesla || tesla.driverId !== driverUserId) {
+    throw new HttpError(403, "Forbidden");
+  }
+
+  return { request, pool };
+}
+
+export async function markDriverArrived(driverUserId: string, requestId: string) {
+  const { request } = await loadOwnedRequest(driverUserId, requestId);
+  if (!isValidTransition(request.status, "DRIVER_ARRIVED")) {
+    throw new HttpError(409, `Cannot mark arrived from ${request.status}`);
+  }
+
+  const updated = await prisma.rideRequest.update({
+    where: { id: requestId },
+    data: { status: "DRIVER_ARRIVED" },
+  });
+  return toPublicRideRequest(updated);
+}
+
+export async function startRide(driverUserId: string, requestId: string) {
+  const { request, pool } = await loadOwnedRequest(driverUserId, requestId);
+  if (!isValidTransition(request.status, "STARTED")) {
+    throw new HttpError(409, `Cannot start a ride from ${request.status}`);
+  }
+
+  // The pool locks here, not at driver-arrived: a driver who has arrived
+  // but not yet pulled away should still be able to pick up one more
+  // compatible passenger.
+  const [updated] = await Promise.all([
+    prisma.rideRequest.update({ where: { id: requestId }, data: { status: "STARTED" } }),
+    prisma.pool.update({ where: { id: pool.id }, data: { status: "LOCKED" } }),
+  ]);
+  return toPublicRideRequest(updated);
+}
+
+export async function completeRide(driverUserId: string, requestId: string) {
+  const { request, pool } = await loadOwnedRequest(driverUserId, requestId);
+  if (!isValidTransition(request.status, "COMPLETED")) {
+    throw new HttpError(409, `Cannot complete a ride from ${request.status}`);
+  }
+
+  const [updated] = await Promise.all([
+    prisma.rideRequest.update({ where: { id: requestId }, data: { status: "COMPLETED" } }),
+    prisma.pool.update({ where: { id: pool.id }, data: { status: "COMPLETED" } }),
+  ]);
+  return toPublicRideRequest(updated);
+}
+
 // Not part of the original spec, but the driver dashboard needs a data
 // source for "requests relevant to this driver": open requests to accept,
 // plus ones already assigned to this driver's tesla in progress.
