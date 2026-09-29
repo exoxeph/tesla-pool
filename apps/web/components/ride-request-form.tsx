@@ -58,6 +58,10 @@ export function RideRequestForm({ onCreated }: { onCreated: () => void }) {
       setFormError("Choose a pickup and a destination zone.");
       return;
     }
+    if (pickupZoneId === destinationZoneId) {
+      setFormError("Pickup and destination must be different zones.");
+      return;
+    }
 
     setIsSubmitting(true);
     try {

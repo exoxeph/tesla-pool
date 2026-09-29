@@ -105,6 +105,16 @@ describe("POST /rides/request", () => {
     expect(rideRequests[0].passengerId).toBe("passenger-1");
   });
 
+  it("rejects a pickup zone that equals the destination zone", async () => {
+    const res = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: BANANI.id, destinationZoneId: BANANI.id, seats: 1 });
+
+    expect(res.status).toBe(400);
+    expect(rideRequests).toHaveLength(0);
+  });
+
   it("matches a hand-computed fare for Banani -> Mohakhali", async () => {
     // Distance (equirectangular, same formula as geo.test.ts): ~1.8204 km.
     // fare = BASE_FARE_PAISA (3000) + round(distanceKm * PER_KM_RATE_PAISA (1500))
