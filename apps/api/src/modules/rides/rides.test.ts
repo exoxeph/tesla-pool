@@ -31,16 +31,26 @@ let pools: MockPool[] = [];
 let nextId = 1;
 let nextPoolId = 1;
 
+// Real Prisma calls round-trip to Postgres, so two concurrent requests
+// genuinely interleave their reads and writes. This mock has no such
+// latency by default, which lets concurrent supertest calls accidentally
+// run fully sequentially instead of racing — hiding the exact bugs the
+// race tests below exist to catch. Awaiting a real event-loop turn before
+// every mocked DB call forces genuine interleaving instead.
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 jest.mock("../../db/prisma", () => {
   const prismaMock: any = {
     zone: {
-      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) =>
-        zoneById(id)
-      ),
+      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) => {
+        await tick();
+        return zoneById(id);
+      }),
     },
     tesla: {
       findUnique: jest.fn(
         async ({ where }: { where: { id?: string; driverId?: string } }) => {
+          await tick();
           if (where.id) return teslas.find((t) => t.id === where.id) ?? null;
           if (where.driverId) return teslas.find((t) => t.driverId === where.driverId) ?? null;
           return null;
@@ -49,27 +59,32 @@ jest.mock("../../db/prisma", () => {
     },
     pool: {
       create: jest.fn(async ({ data }: { data: Omit<MockPool, "id"> }) => {
+        await tick();
         const row: MockPool = { id: `pool-${nextPoolId++}`, ...data };
         pools.push(row);
         return row;
       }),
-      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) =>
-        pools.find((p) => p.id === id) ?? null
-      ),
+      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) => {
+        await tick();
+        return pools.find((p) => p.id === id) ?? null;
+      }),
       update: jest.fn(
         async ({ where: { id }, data }: { where: { id: string }; data: Partial<MockPool> }) => {
+          await tick();
           const row = pools.find((p) => p.id === id);
           if (!row) throw new Error("pool not found");
           Object.assign(row, data);
           return row;
         }
       ),
-      findMany: jest.fn(async ({ where: { teslaId } }: { where: { teslaId: string } }) =>
-        pools.filter((p) => p.teslaId === teslaId)
-      ),
+      findMany: jest.fn(async ({ where: { teslaId } }: { where: { teslaId: string } }) => {
+        await tick();
+        return pools.filter((p) => p.teslaId === teslaId);
+      }),
     },
     rideRequest: {
       create: jest.fn(async ({ data }: { data: Omit<MockRideRequest, "id" | "status" | "poolId" | "createdAt"> }) => {
+        await tick();
         const row: MockRideRequest = {
           id: String(nextId++),
           status: "REQUESTED",
@@ -86,6 +101,7 @@ jest.mock("../../db/prisma", () => {
         }: {
           where: { passengerId?: string; status?: string; poolId?: { in: string[] } };
         }) => {
+          await tick();
           let rows = rideRequests;
           if (where.passengerId) rows = rows.filter((r) => r.passengerId === where.passengerId);
           if (where.status) rows = rows.filter((r) => r.status === where.status);
@@ -93,9 +109,10 @@ jest.mock("../../db/prisma", () => {
           return [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
         }
       ),
-      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) =>
-        rideRequests.find((r) => r.id === id) ?? null
-      ),
+      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) => {
+        await tick();
+        return rideRequests.find((r) => r.id === id) ?? null;
+      }),
       update: jest.fn(
         async ({
           where: { id },
@@ -104,6 +121,7 @@ jest.mock("../../db/prisma", () => {
           where: { id: string };
           data: Partial<MockRideRequest>;
         }) => {
+          await tick();
           const row = rideRequests.find((r) => r.id === id);
           if (!row) throw new Error("not found");
           Object.assign(row, data);
@@ -121,6 +139,7 @@ jest.mock("../../db/prisma", () => {
           where: { id: string; status?: string };
           data: Partial<MockRideRequest>;
         }) => {
+          await tick();
           const row = rideRequests.find(
             (r) => r.id === where.id && (where.status === undefined || r.status === where.status)
           );
@@ -132,19 +151,56 @@ jest.mock("../../db/prisma", () => {
     },
   };
 
-  // Mimics Prisma's interactive transaction: runs the callback against the
-  // same mock client, and if it throws, rolls back any pools/rideRequests
-  // mutations made inside it — mirroring real rollback-on-throw semantics
-  // so tests can confirm a losing accept doesn't leave an orphaned pool.
+  // Mimics Prisma's interactive transaction. Two genuinely concurrent
+  // transactions can be in flight at once in these race tests (that's the
+  // whole point), so rollback can't snapshot/restore the whole shared
+  // pools/rideRequests arrays — a later transaction's legitimate write
+  // would get wiped out by an earlier one's rollback. Instead, each
+  // transaction gets its own tx client that records precisely which rows
+  // it changed and their prior values, and only undoes those specific
+  // writes if its own callback throws.
+  function withUndo(undoStack: Array<() => void>) {
+    return {
+      ...prismaMock,
+      pool: {
+        ...prismaMock.pool,
+        create: jest.fn(async (args: { data: Omit<MockPool, "id"> }) => {
+          const row = await prismaMock.pool.create(args);
+          undoStack.push(() => {
+            pools = pools.filter((p) => p.id !== row.id);
+          });
+          return row;
+        }),
+      },
+      rideRequest: {
+        ...prismaMock.rideRequest,
+        updateMany: jest.fn(
+          async (args: { where: { id: string; status?: string }; data: Partial<MockRideRequest> }) => {
+            const target = rideRequests.find(
+              (r) =>
+                r.id === args.where.id &&
+                (args.where.status === undefined || r.status === args.where.status)
+            );
+            const prevValues = target ? { ...target } : null;
+            const result = await prismaMock.rideRequest.updateMany(args);
+            if (result.count > 0 && prevValues && target) {
+              undoStack.push(() => Object.assign(target, prevValues));
+            }
+            return result;
+          }
+        ),
+      },
+    };
+  }
+
   prismaMock.$transaction = jest.fn(async (arg: unknown) => {
     if (typeof arg === "function") {
-      const poolsSnapshot = pools.map((p) => ({ ...p }));
-      const rideRequestsSnapshot = rideRequests.map((r) => ({ ...r }));
+      const undoStack: Array<() => void> = [];
+      const tx = withUndo(undoStack);
       try {
-        return await (arg as (tx: unknown) => Promise<unknown>)(prismaMock);
+        return await (arg as (tx: unknown) => Promise<unknown>)(tx);
       } catch (err) {
-        pools = poolsSnapshot;
-        rideRequests = rideRequestsSnapshot;
+        for (let i = undoStack.length - 1; i >= 0; i--) undoStack[i]();
         throw err;
       }
     }
@@ -359,6 +415,23 @@ describe("ride lifecycle", () => {
       .set("Authorization", `Bearer ${tokenFor("driver-2", "DRIVER")}`);
 
     expect(res.status).toBe(403);
+  });
+
+  it("doesn't let driver-arrived silently win against a concurrent cancel", async () => {
+    const id = await createRequest("passenger-1");
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    await request(app).post(`/rides/${id}/accept`).set("Authorization", driverToken);
+
+    const [arrivedRes, cancelRes] = await Promise.all([
+      request(app).patch(`/rides/${id}/driver-arrived`).set("Authorization", driverToken),
+      request(app).patch(`/rides/${id}/cancel`).set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`),
+    ]);
+
+    const statuses = [arrivedRes.status, cancelRes.status].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    const finalRequest = rideRequests.find((r) => r.id === id)!;
+    expect(finalRequest.status).toBe(arrivedRes.status === 200 ? "DRIVER_ARRIVED" : "CANCELLED");
   });
 
   it("allows cancelling from MATCHED and DRIVER_ARRIVED", async () => {

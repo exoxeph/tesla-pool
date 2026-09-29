@@ -188,11 +188,18 @@ export async function markDriverArrived(driverUserId: string, requestId: string)
     throw new HttpError(409, `Cannot mark arrived from ${request.status}`);
   }
 
-  const updated = await prisma.rideRequest.update({
-    where: { id: requestId },
+  // Conditional on the status just read: guards against a concurrent
+  // cancel (or, in principle, another driver action racing on the same
+  // request) landing between this read and the write.
+  const result = await prisma.rideRequest.updateMany({
+    where: { id: requestId, status: request.status },
     data: { status: "DRIVER_ARRIVED" },
   });
-  return toPublicRideRequest(updated);
+  if (result.count === 0) {
+    throw new HttpError(409, "This request's status changed before the update could apply");
+  }
+
+  return toPublicRideRequest({ ...request, status: "DRIVER_ARRIVED" });
 }
 
 export async function startRide(driverUserId: string, requestId: string) {
