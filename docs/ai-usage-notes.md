@@ -211,6 +211,24 @@ for the user — and was replaced by different tooling, not by the same
 approach done more carefully. That's a legitimate "rejected" outcome for
 Section 8, not a failure to hide.
 
+### User-directed decision — paisa integers over taka decimals (project-wide, from the original brief)
+
+The rule that money is always stored and computed as integer paisa —
+never a float or decimal taka value — was the user's own instruction,
+given in the very first project brief before any code existed ("Store
+money as integer paisa, not decimal/float"), specifically to avoid
+floating-point rounding error accumulating across repeated arithmetic.
+
+This wasn't an AI suggestion adopted once; it became a standing
+constraint the AI followed consistently afterward without needing to be
+told again: `RideRequest.farePaisa` in the original Prisma schema,
+`estimateFarePaisa()` in `feature/ride-request`'s fare module, and the
+geography work's own reasoning ("same reasoning as documented for the
+geo work") all point back to this one user decision. Worth recording
+accurately as user-directed architecture, not AI-originated, since
+Section 8 asks for genuine attribution rather than crediting the AI for
+choices the user actually made.
+
 ### Process note — commit timestamps vs. actual incremental work
 
 `feature/passenger-auth`'s 8 commits were made in two tight clusters
