@@ -257,6 +257,25 @@ naming for Section 8: automated tests and code review didn't catch this
 because the tests only exercised distinct zones; a human trying the
 actual product did.
 
+**Follow-up, same session:** the "fixed" claim above was itself
+incomplete. The fix guarded `handleSubmit` (blocking the actual network
+call) but not the live fare-preview `useMemo`, which kept computing and
+displaying a fare for a same-zone selection regardless — so the user,
+after restarting the dev server, still saw "Gulshan 1 → Gulshan 1,
+৳30.00" and reasonably asked again whether it was fixed. It *was* fixed
+for the one thing that actually creates data (submission was already
+returning 400 server-side); what was still broken was a second, separate
+code path (the live preview) that happened to display the same wrong
+number without ever calling the API. Root-caused by checking the actual
+component code rather than assuming the earlier fix covered everything,
+then guarded `estimatedFarePaisa` itself and disabled the submit button
+outright for a same-zone selection, confirmed live in the browser this
+time (not just via curl), and cleaned up the one bad row that predated
+the fix from the dev database. Worth logging as its own instance:
+claiming a fix is complete after testing only the backend, when the bug
+was also visible in a second, independent frontend code path, is exactly
+the kind of gap a "looks done" report can hide.
+
 ### Process note — commit timestamps vs. actual incremental work
 
 `feature/passenger-auth`'s 8 commits were made in two tight clusters
