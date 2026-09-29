@@ -229,6 +229,34 @@ accurately as user-directed architecture, not AI-originated, since
 Section 8 asks for genuine attribution rather than crediting the AI for
 choices the user actually made.
 
+### Bug caught by the user, not the AI — same-zone ride requests charged the base fare (feature/ride-request)
+
+`POST /rides/request` never checked that `pickupZoneId` differed from
+`destinationZoneId`. This was a known, explicitly-considered gap: while
+building the form, adding a same-zone guard was weighed and deliberately
+left out as "not explicitly requested... keep simple," reasoning that
+mattered for the wrong thing here — a request to travel from a zone to
+itself is nonsensical, not just an edge case. The distance formula
+correctly returns `0 km` for identical coordinates, so the flat base
+fare (`BASE_FARE_PAISA` = 3000 paisa = ৳30.00) got charged for going
+nowhere. The user caught it by testing "Gulshan 1 to Gulshan 1" and
+asking directly whether that was a problem.
+
+Fixed with a zod `.refine()` on the creation schema (returns `400`
+before any zone lookup or fare calculation runs), mirrored as a
+client-side check in the form so the error shows before a network round
+trip, and covered by a new test. Verified live: the same request that
+previously returned `farePaisa: 3000` now returns `400`.
+
+Distinct from the earlier bugs logged here: this wasn't a coding mistake
+inside a decision already made — it was a *scope call during
+implementation* (skip the guard, ship the simpler version) that turned
+out to be wrong, caught by the user actually trying the product rather
+than reading the code. That's a different kind of review value worth
+naming for Section 8: automated tests and code review didn't catch this
+because the tests only exercised distinct zones; a human trying the
+actual product did.
+
 ### Process note — commit timestamps vs. actual incremental work
 
 `feature/passenger-auth`'s 8 commits were made in two tight clusters
