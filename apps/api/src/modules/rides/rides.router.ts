@@ -4,8 +4,11 @@ import { requireAuth, requireRole } from "../../common/auth-middleware";
 import { HttpError } from "../../common/httpError";
 import { createRideRequestSchema } from "./rides.schema";
 import {
+  acceptRideRequest,
   cancelRideRequest,
   createRideRequest,
+  listAvailableRideRequests,
+  listOwnDriverRideRequests,
   listOwnRideRequests,
 } from "./rides.service";
 
@@ -40,6 +43,36 @@ ridesRouter.patch(
   requireAuth,
   asyncHandler(async (req, res) => {
     const request = await cancelRideRequest(req.params.id, req.auth!.sub);
+    res.json({ request });
+  })
+);
+
+ridesRouter.get(
+  "/rides/available",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (_req, res) => {
+    const requests = await listAvailableRideRequests();
+    res.json({ requests });
+  })
+);
+
+ridesRouter.get(
+  "/rides/driver-mine",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (req, res) => {
+    const requests = await listOwnDriverRideRequests(req.auth!.sub);
+    res.json({ requests });
+  })
+);
+
+ridesRouter.post(
+  "/rides/:id/accept",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (req, res) => {
+    const request = await acceptRideRequest(req.auth!.sub, req.params.id);
     res.json({ request });
   })
 );

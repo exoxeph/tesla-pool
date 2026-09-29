@@ -1,6 +1,7 @@
 import { estimateFarePaisa } from "../../common/fare";
 import { equirectangularDistanceKm } from "../../common/geo";
 import { HttpError } from "../../common/httpError";
+import { isValidTransition } from "../../common/rideLifecycle";
 import { prisma } from "../../db/prisma";
 import type { CreateRideRequestInput } from "./rides.schema";
 
@@ -95,4 +96,68 @@ export async function cancelRideRequest(
   });
 
   return toPublicRideRequest(cancelled);
+}
+
+// Real multi-passenger pooling is feature/tesla-pooling's job. For now,
+// accepting a request creates a "solo pool" — one Pool with a single
+// RideRequest in it — using the same Pool model and capacity check that
+// pooling will later extend to handle several passengers at once.
+export async function acceptRideRequest(driverUserId: string, requestId: string) {
+  const tesla = await prisma.tesla.findUnique({
+    where: { driverId: driverUserId },
+  });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+
+  const request = await prisma.rideRequest.findUnique({
+    where: { id: requestId },
+  });
+  if (!request) {
+    throw new HttpError(404, "Ride request not found");
+  }
+  if (!isValidTransition(request.status, "MATCHED")) {
+    throw new HttpError(409, `Cannot accept a request that is ${request.status}`);
+  }
+  if (request.seats > tesla.capacity) {
+    throw new HttpError(409, "Requested seats exceed this vehicle's capacity");
+  }
+
+  const pool = await prisma.pool.create({
+    data: { teslaId: tesla.id, status: "OPEN", seatsTaken: request.seats },
+  });
+
+  const updated = await prisma.rideRequest.update({
+    where: { id: requestId },
+    data: { status: "MATCHED", poolId: pool.id },
+  });
+
+  return toPublicRideRequest(updated);
+}
+
+// Not part of the original spec, but the driver dashboard needs a data
+// source for "requests relevant to this driver": open requests to accept,
+// plus ones already assigned to this driver's tesla in progress.
+export async function listAvailableRideRequests() {
+  const requests = await prisma.rideRequest.findMany({
+    where: { status: "REQUESTED" },
+    orderBy: { createdAt: "asc" },
+  });
+  return requests.map(toPublicRideRequest);
+}
+
+export async function listOwnDriverRideRequests(driverUserId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+
+  const pools = await prisma.pool.findMany({ where: { teslaId: tesla.id } });
+  const poolIds = pools.map((p) => p.id);
+
+  const requests = await prisma.rideRequest.findMany({
+    where: { poolId: { in: poolIds } },
+    orderBy: { createdAt: "asc" },
+  });
+  return requests.map(toPublicRideRequest);
 }
