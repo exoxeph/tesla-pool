@@ -30,6 +30,26 @@ existing requireAuth/requireRole middleware," assume it applies anyway.
 Reinventing per-route auth checks with subtly different logic each time is
 the failure mode this note exists to prevent.
 
+## Git workflow — merge branches through a PR, not a local fast-forward
+
+When a feature branch is ready to merge into `master`, open a pull
+request on GitHub and merge through it — do not `git merge` it into
+`master` locally and push directly.
+
+Concretely: push the branch, open the PR (`gh pr create`), then merge
+via the PR (`gh pr merge`) once the user says to merge. Only fall back
+to a local merge if the user explicitly says to skip the PR for a given
+branch.
+
+Why: a local fast-forward merge leaves no PR record and no merge commit
+— `master`'s history looks identical to as if every commit had been made
+directly on `master`. If the branch ref is later deleted, there is no
+trace anywhere (not even in `git log`) that the work was ever on a
+separate branch. `feature/ride-lifecycle` was merged this way before
+this rule existed; going forward, every branch should have a real PR
+so the incremental, reviewed nature of the work is actually visible in
+GitHub's history, not just asserted in commit messages.
+
 ## AI usage notes
 
 This is a technical assessment graded in part on the README's **AI Usage**
