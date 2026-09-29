@@ -90,12 +90,19 @@ export async function cancelRideRequest(
     throw new HttpError(409, "This ride can no longer be cancelled");
   }
 
-  const cancelled = await prisma.rideRequest.update({
-    where: { id: requestId },
+  // Conditional on the status just read: guards against a concurrent
+  // driver action (accept/arrived/start) changing the status between this
+  // read and the write. If that happened, count is 0 and this fails
+  // instead of cancelling a ride that's already moved on underneath it.
+  const result = await prisma.rideRequest.updateMany({
+    where: { id: requestId, status: request.status },
     data: { status: "CANCELLED" },
   });
+  if (result.count === 0) {
+    throw new HttpError(409, "This ride can no longer be cancelled");
+  }
 
-  return toPublicRideRequest(cancelled);
+  return toPublicRideRequest({ ...request, status: "CANCELLED" });
 }
 
 // Real multi-passenger pooling is feature/tesla-pooling's job. For now,

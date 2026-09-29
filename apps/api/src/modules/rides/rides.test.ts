@@ -265,6 +265,32 @@ describe("PATCH /rides/:id/cancel", () => {
     const second = await request(app).patch(`/rides/${id}/cancel`).set("Authorization", token);
     expect(second.status).toBe(409);
   });
+
+  it("doesn't let a cancel silently win against a concurrent accept", async () => {
+    const created = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: BANANI.id, destinationZoneId: MOHAKHALI.id, seats: 1 });
+    const id = created.body.request.id;
+
+    const [cancelRes, acceptRes] = await Promise.all([
+      request(app).patch(`/rides/${id}/cancel`).set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`),
+      request(app).post(`/rides/${id}/accept`).set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`),
+    ]);
+
+    // Exactly one of the two actions should have actually taken effect —
+    // never both, and never a silently overwritten result.
+    const statuses = [cancelRes.status, acceptRes.status].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    const finalRequest = rideRequests.find((r) => r.id === id)!;
+    if (cancelRes.status === 200) {
+      expect(finalRequest.status).toBe("CANCELLED");
+      expect(pools).toHaveLength(0); // accept's speculative pool was rolled back
+    } else {
+      expect(finalRequest.status).toBe("MATCHED");
+    }
+  });
 });
 
 async function createRequest(passengerId: string, seats = 1) {
