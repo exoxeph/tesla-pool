@@ -16,7 +16,7 @@ type MockRideRequest = {
   createdAt: Date;
 };
 type MockTesla = { id: string; driverId: string; label: string; capacity: number };
-type MockPool = { id: string; teslaId: string; status: string; seatsTaken: number };
+type MockPool = { id: string; teslaId: string; status: string; seatsTaken: number; createdAt: Date };
 
 const ZONES: MockZone[] = Object.entries(TEST_ZONES).map(([name, coords]) => ({
   id: `zone-${name.toLowerCase().replace(/\s+/g, "-")}`,
@@ -58,9 +58,9 @@ jest.mock("../../db/prisma", () => {
       ),
     },
     pool: {
-      create: jest.fn(async ({ data }: { data: Omit<MockPool, "id"> }) => {
+      create: jest.fn(async ({ data }: { data: Omit<MockPool, "id" | "createdAt"> }) => {
         await tick();
-        const row: MockPool = { id: `pool-${nextPoolId++}`, ...data };
+        const row: MockPool = { id: `pool-${nextPoolId++}`, createdAt: new Date(), ...data };
         pools.push(row);
         return row;
       }),
@@ -77,10 +77,37 @@ jest.mock("../../db/prisma", () => {
           return row;
         }
       ),
-      findMany: jest.fn(async ({ where: { teslaId } }: { where: { teslaId: string } }) => {
-        await tick();
-        return pools.filter((p) => p.teslaId === teslaId);
-      }),
+      findMany: jest.fn(
+        async ({ where }: { where: { teslaId: string; status?: string } }) => {
+          await tick();
+          let rows = pools.filter((p) => p.teslaId === where.teslaId);
+          if (where.status) rows = rows.filter((p) => p.status === where.status);
+          return [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+        }
+      ),
+      // Atomic seat claim: only increments if the pool is still OPEN and
+      // still has room (mirrors the real Prisma updateMany used in
+      // acceptRideRequest for the last-seat race).
+      updateMany: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; status?: string; seatsTaken?: { lte: number } };
+          data: { seatsTaken: { increment: number } };
+        }) => {
+          await tick();
+          const row = pools.find(
+            (p) =>
+              p.id === where.id &&
+              (where.status === undefined || p.status === where.status) &&
+              (where.seatsTaken === undefined || p.seatsTaken <= where.seatsTaken.lte)
+          );
+          if (!row) return { count: 0 };
+          row.seatsTaken += data.seatsTaken.increment;
+          return { count: 1 };
+        }
+      ),
     },
     rideRequest: {
       create: jest.fn(async ({ data }: { data: Omit<MockRideRequest, "id" | "status" | "poolId" | "createdAt"> }) => {
@@ -98,21 +125,62 @@ jest.mock("../../db/prisma", () => {
       findMany: jest.fn(
         async ({
           where,
+          include,
         }: {
-          where: { passengerId?: string; status?: string; poolId?: { in: string[] } };
+          where: { passengerId?: string; status?: string; poolId?: string | { in: string[] } };
+          include?: { passenger?: boolean };
         }) => {
           await tick();
           let rows = rideRequests;
           if (where.passengerId) rows = rows.filter((r) => r.passengerId === where.passengerId);
           if (where.status) rows = rows.filter((r) => r.status === where.status);
-          if (where.poolId) rows = rows.filter((r) => r.poolId && where.poolId!.in.includes(r.poolId));
-          return [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+          const poolIdFilter = where.poolId;
+          if (typeof poolIdFilter === "string") {
+            rows = rows.filter((r) => r.poolId === poolIdFilter);
+          } else if (poolIdFilter) {
+            rows = rows.filter((r) => r.poolId && poolIdFilter.in.includes(r.poolId));
+          }
+          const sorted = [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+          if (include?.passenger) {
+            // No real User model in this mock — the passengerId itself
+            // stands in for a display name, which is all these tests need.
+            return sorted.map((r) => ({ ...r, passenger: { name: r.passengerId } }));
+          }
+          return sorted;
         }
       ),
       findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) => {
         await tick();
         return rideRequests.find((r) => r.id === id) ?? null;
       }),
+      // Used by pool-matching.ts to find a pool's "anchor" — the earliest
+      // still-active request in it. `include` attaches the real zone rows
+      // (with lat/lng) the same way Prisma would resolve the relation.
+      findFirst: jest.fn(
+        async ({
+          where,
+          orderBy,
+        }: {
+          where: { poolId: string; status?: { not: string } };
+          orderBy?: { createdAt: "asc" | "desc" };
+        }) => {
+          await tick();
+          let rows = rideRequests.filter((r) => r.poolId === where.poolId);
+          if (where.status?.not) rows = rows.filter((r) => r.status !== where.status!.not);
+          rows = [...rows].sort((a, b) =>
+            orderBy?.createdAt === "desc"
+              ? b.createdAt.getTime() - a.createdAt.getTime()
+              : a.createdAt.getTime() - b.createdAt.getTime()
+          );
+          const found = rows[0];
+          if (!found) return null;
+          return {
+            ...found,
+            pickupZone: zoneById(found.pickupZoneId),
+            destinationZone: zoneById(found.destinationZoneId),
+          };
+        }
+      ),
       update: jest.fn(
         async ({
           where: { id },
@@ -164,13 +232,34 @@ jest.mock("../../db/prisma", () => {
       ...prismaMock,
       pool: {
         ...prismaMock.pool,
-        create: jest.fn(async (args: { data: Omit<MockPool, "id"> }) => {
+        create: jest.fn(async (args: { data: Omit<MockPool, "id" | "createdAt"> }) => {
           const row = await prismaMock.pool.create(args);
           undoStack.push(() => {
             pools = pools.filter((p) => p.id !== row.id);
           });
           return row;
         }),
+        updateMany: jest.fn(
+          async (args: {
+            where: { id: string; status?: string; seatsTaken?: { lte: number } };
+            data: { seatsTaken: { increment: number } };
+          }) => {
+            const target = pools.find(
+              (p) =>
+                p.id === args.where.id &&
+                (args.where.status === undefined || p.status === args.where.status) &&
+                (args.where.seatsTaken === undefined || p.seatsTaken <= args.where.seatsTaken.lte)
+            );
+            const prevSeatsTaken = target?.seatsTaken;
+            const result = await prismaMock.pool.updateMany(args);
+            if (result.count > 0 && target && prevSeatsTaken !== undefined) {
+              undoStack.push(() => {
+                target.seatsTaken = prevSeatsTaken;
+              });
+            }
+            return result;
+          }
+        ),
       },
       rideRequest: {
         ...prismaMock.rideRequest,
@@ -217,6 +306,8 @@ function tokenFor(sub: string, role: string) {
 
 const BANANI = ZONES.find((z) => z.name === "Banani")!;
 const MOHAKHALI = ZONES.find((z) => z.name === "Mohakhali")!;
+const GULSHAN1 = ZONES.find((z) => z.name === "Gulshan 1")!;
+const FARMGATE = ZONES.find((z) => z.name === "Farmgate")!;
 
 beforeEach(() => {
   rideRequests = [];
@@ -355,6 +446,23 @@ async function createRequest(passengerId: string, seats = 1) {
     .set("Authorization", `Bearer ${tokenFor(passengerId, "PASSENGER")}`)
     .send({ pickupZoneId: BANANI.id, destinationZoneId: MOHAKHALI.id, seats });
   return res.body.request.id as string;
+}
+
+async function createRequestWithRoute(
+  passengerId: string,
+  pickupZoneId: string,
+  destinationZoneId: string,
+  seats = 1
+) {
+  const res = await request(app)
+    .post("/rides/request")
+    .set("Authorization", `Bearer ${tokenFor(passengerId, "PASSENGER")}`)
+    .send({ pickupZoneId, destinationZoneId, seats });
+  return res.body.request.id as string;
+}
+
+async function acceptAs(driverToken: string, requestId: string) {
+  return request(app).post(`/rides/${requestId}/accept`).set("Authorization", driverToken);
 }
 
 describe("ride lifecycle", () => {
@@ -587,5 +695,157 @@ describe("GET /rides/driver-mine", () => {
     expect(res.status).toBe(200);
     expect(res.body.requests).toHaveLength(1);
     expect(res.body.requests[0].id).toBe(idForDriver1);
+  });
+});
+
+describe("pooling", () => {
+  it("pools two overlapping-but-different-destination requests together per the matching rule", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+
+    const founderId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 1);
+    const founded = await acceptAs(driverToken, founderId);
+    expect(founded.status).toBe(200);
+    const poolId = founded.body.request.poolId;
+
+    // Same pickup (Banani), a different but nearby destination (Gulshan 1,
+    // 2.43km from Mohakhali — within the 3km destination threshold).
+    const joinerId = await createRequestWithRoute("passenger-2", BANANI.id, GULSHAN1.id, 1);
+    const joined = await acceptAs(driverToken, joinerId);
+
+    expect(joined.status).toBe(200);
+    expect(joined.body.request.poolId).toBe(poolId);
+    expect(pools.find((p) => p.id === poolId)?.seatsTaken).toBe(2);
+  });
+
+  it("does not pool a request outside the matching rule, even into a pool with room", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+
+    const founderId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 1);
+    const founded = await acceptAs(driverToken, founderId);
+    const poolId = founded.body.request.poolId;
+
+    // Farmgate is ~4.55km from Banani — over the 1.5km pickup threshold —
+    // so this must NOT join the pool even though it has room.
+    const outsiderId = await createRequestWithRoute("passenger-3", FARMGATE.id, MOHAKHALI.id, 1);
+    const res = await acceptAs(driverToken, outsiderId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.request.poolId).not.toBe(poolId);
+    expect(pools.find((p) => p.id === poolId)?.seatsTaken).toBe(1);
+  });
+
+  it("matches hand-computed fares for a founding passenger and a joining passenger", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+
+    const founderId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 1);
+    const founded = await acceptAs(driverToken, founderId);
+    // Founding a pool: no discount. BASE_FARE_PAISA (3000) +
+    // round(1.8204km * PER_KM_RATE_PAISA (1500)) = 3000 + 2731 = 5731.
+    expect(founded.body.request.farePaisa).toBe(5731);
+
+    const joinerId = await createRequestWithRoute("passenger-2", BANANI.id, GULSHAN1.id, 1);
+    const joined = await acceptAs(driverToken, joinerId);
+    // Joining an existing pool: 15% off. Base = 3000 + round(1.1160km *
+    // 1500) = 3000 + 1674 = 4674. Discounted = round(4674 * 0.85) = 3973.
+    expect(joined.body.request.farePaisa).toBe(3973);
+  });
+
+  it("rejects joining a LOCKED pool even with free seats", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+
+    const founderId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 1);
+    const founded = await acceptAs(driverToken, founderId);
+    const poolId = founded.body.request.poolId;
+
+    await request(app).patch(`/rides/${founderId}/driver-arrived`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${founderId}/start`).set("Authorization", driverToken);
+    expect(pools.find((p) => p.id === poolId)?.status).toBe("LOCKED");
+
+    // tesla-1 has capacity 3, only 1 seat taken — technically 2 free — but
+    // the pool is LOCKED, so a compatible new request must not join it.
+    const joinerId = await createRequestWithRoute("passenger-2", BANANI.id, GULSHAN1.id, 1);
+    const res = await acceptAs(driverToken, joinerId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.request.poolId).not.toBe(poolId);
+    expect(pools.find((p) => p.id === poolId)?.seatsTaken).toBe(1);
+  });
+
+  it("claims the last seat exactly once under two concurrent joins, without overbooking", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+
+    // tesla-1 capacity 3: found the pool with a 2-seat request, leaving
+    // exactly 1 seat free for the two concurrent 1-seat joins to race for.
+    const founderId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 2);
+    const founded = await acceptAs(driverToken, founderId);
+    const poolId = founded.body.request.poolId;
+    expect(pools.find((p) => p.id === poolId)?.seatsTaken).toBe(2);
+
+    const joinerAId = await createRequestWithRoute("passenger-2", BANANI.id, MOHAKHALI.id, 1);
+    const joinerBId = await createRequestWithRoute("passenger-3", BANANI.id, MOHAKHALI.id, 1);
+
+    const [resA, resB] = await Promise.all([
+      acceptAs(driverToken, joinerAId),
+      acceptAs(driverToken, joinerBId),
+    ]);
+
+    const statuses = [resA.status, resB.status].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    // Exactly one seat was claimed — capacity is never exceeded.
+    expect(pools.find((p) => p.id === poolId)?.seatsTaken).toBe(3);
+
+    const winnerId = resA.status === 200 ? joinerAId : joinerBId;
+    const loserId = resA.status === 200 ? joinerBId : joinerAId;
+    expect(rideRequests.find((r) => r.id === winnerId)?.poolId).toBe(poolId);
+    expect(rideRequests.find((r) => r.id === winnerId)?.status).toBe("MATCHED");
+    // The loser's request was never touched — still REQUESTED, no pool.
+    expect(rideRequests.find((r) => r.id === loserId)?.poolId).toBeNull();
+    expect(rideRequests.find((r) => r.id === loserId)?.status).toBe("REQUESTED");
+  });
+});
+
+describe("GET /rides/pools/mine", () => {
+  it("returns the pool's full passenger list, not just a flat list of rides", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+
+    const founderId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 1);
+    await acceptAs(driverToken, founderId);
+    const joinerId = await createRequestWithRoute("passenger-2", BANANI.id, GULSHAN1.id, 1);
+    await acceptAs(driverToken, joinerId);
+
+    const res = await request(app).get("/rides/pools/mine").set("Authorization", driverToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.pools).toHaveLength(1);
+    const pool = res.body.pools[0];
+    expect(pool.status).toBe("OPEN");
+    expect(pool.seatsTaken).toBe(2);
+    expect(pool.capacity).toBe(3);
+    expect(pool.passengers).toHaveLength(2);
+    expect(pool.passengers.map((p: { requestId: string }) => p.requestId).sort()).toEqual(
+      [founderId, joinerId].sort()
+    );
+    for (const passenger of pool.passengers) {
+      expect(passenger).toMatchObject({
+        passengerName: expect.any(String),
+        pickupZoneId: expect.any(String),
+        destinationZoneId: expect.any(String),
+        status: "MATCHED",
+        farePaisa: expect.any(Number),
+      });
+    }
+  });
+
+  it("never returns another driver's pools", async () => {
+    const idForDriver2 = await createRequest("passenger-1");
+    await acceptAs(`Bearer ${tokenFor("driver-2", "DRIVER")}`, idForDriver2);
+
+    const res = await request(app)
+      .get("/rides/pools/mine")
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.pools).toHaveLength(0);
   });
 });

@@ -1,8 +1,9 @@
-import { estimateFarePaisa } from "../../common/fare";
+import { calculatePerPassengerFarePaisa, estimateFarePaisa } from "../../common/fare";
 import { equirectangularDistanceKm } from "../../common/geo";
 import { HttpError } from "../../common/httpError";
 import { isValidTransition } from "../../common/rideLifecycle";
 import { prisma } from "../../db/prisma";
+import { findCompatibleOpenPool } from "./pool-matching";
 import type { CreateRideRequestInput } from "./rides.schema";
 
 function toPublicRideRequest(request: {
@@ -47,8 +48,12 @@ export async function createRideRequest(
     { lat: pickupZone.lat!, lng: pickupZone.lng! },
     { lat: destinationZone.lat!, lng: destinationZone.lng! }
   );
-  // Fare scales with seats: each seat is a ticket on this shared trip, not
-  // a flat per-request charge — 3 seats costs 3x what 1 seat costs.
+  // This is an estimate only — the pool discount can't be known until a
+  // driver actually accepts (that's when it becomes clear whether this
+  // passenger is founding a pool or joining one), so acceptRideRequest
+  // recalculates and overwrites farePaisa with the final per-passenger
+  // amount. Fare scales with seats either way: each seat is a ticket on
+  // this shared trip, not a flat per-request charge.
   const farePaisa = estimateFarePaisa(distanceKm) * input.seats;
 
   const request = await prisma.rideRequest.create({
@@ -105,10 +110,13 @@ export async function cancelRideRequest(
   return toPublicRideRequest({ ...request, status: "CANCELLED" });
 }
 
-// Real multi-passenger pooling is feature/tesla-pooling's job. For now,
-// accepting a request creates a "solo pool" — one Pool with a single
-// RideRequest in it — using the same Pool model and capacity check that
-// pooling will later extend to handle several passengers at once.
+// Accepting a request either joins an existing compatible OPEN pool on
+// this driver's own tesla (real multi-passenger pooling) or founds a new
+// one if no candidate matches — see pool-matching.ts for the rule and
+// docs/geography-and-matching.md for the anchor design. Either way, the
+// seat claim and the request's pool link are atomic within one
+// transaction: never link a request to a pool whose seat wasn't actually
+// claimed (avoids the orphaned-pool pattern fixed on feature/ride-lifecycle).
 export async function acceptRideRequest(driverUserId: string, requestId: string) {
   const tesla = await prisma.tesla.findUnique({
     where: { driverId: driverUserId },
@@ -130,28 +138,74 @@ export async function acceptRideRequest(driverUserId: string, requestId: string)
     throw new HttpError(409, "Requested seats exceed this vehicle's capacity");
   }
 
-  // Runs as one transaction: the conditional updateMany only succeeds if
-  // the request is still exactly the status we read above, so two drivers
-  // accepting the same request at once can't both win. If this call loses
-  // that race, the pool it just created is rolled back with it instead of
-  // being left behind as an orphan nobody is actually in.
+  const [pickupZone, destinationZone] = await Promise.all([
+    prisma.zone.findUnique({ where: { id: request.pickupZoneId } }),
+    prisma.zone.findUnique({ where: { id: request.destinationZoneId } }),
+  ]);
+  if (!pickupZone || !destinationZone) {
+    throw new HttpError(404, "Zone not found");
+  }
+  const pickup = { lat: pickupZone.lat!, lng: pickupZone.lng! };
+  const destination = { lat: destinationZone.lat!, lng: destinationZone.lng! };
+  const distanceKm = equirectangularDistanceKm(pickup, destination);
+
+  const candidate = await findCompatibleOpenPool(
+    tesla.id,
+    tesla.capacity,
+    pickup,
+    destination,
+    request.seats
+  );
+  // Fare is finalized here, not at request creation: only at accept time
+  // do we know whether this passenger is founding a pool (no discount) or
+  // joining one that already has another active passenger (discounted).
+  const farePaisa = calculatePerPassengerFarePaisa(distanceKm, request.seats, candidate !== null);
+
+  // Runs as one transaction: the seat claim (join an existing pool, or
+  // create a new one) and the conditional request-link updateMany either
+  // both land or neither does. The request-link is conditional on the
+  // status just read above, so two drivers accepting the same request at
+  // once can't both win — a losing call rolls back whatever seat claim or
+  // pool creation it just made, instead of leaving it behind as an orphan.
   const poolId = await prisma.$transaction(async (tx) => {
-    const pool = await tx.pool.create({
-      data: { teslaId: tesla.id, status: "OPEN", seatsTaken: request.seats },
-    });
+    let targetPoolId: string;
+
+    if (candidate) {
+      // Atomic seat claim: only increments if the pool is still OPEN and
+      // still has room for these seats. This is the Nusrat/Shirin
+      // last-seat race — two concurrent joins racing for the same
+      // remaining seat can't both succeed; the loser gets count === 0.
+      const joinResult = await tx.pool.updateMany({
+        where: {
+          id: candidate.id,
+          status: "OPEN",
+          seatsTaken: { lte: tesla.capacity - request.seats },
+        },
+        data: { seatsTaken: { increment: request.seats } },
+      });
+      if (joinResult.count === 0) {
+        throw new HttpError(409, "This pool no longer has room for your request");
+      }
+      targetPoolId = candidate.id;
+    } else {
+      const pool = await tx.pool.create({
+        data: { teslaId: tesla.id, status: "OPEN", seatsTaken: request.seats },
+      });
+      targetPoolId = pool.id;
+    }
 
     const result = await tx.rideRequest.updateMany({
       where: { id: requestId, status: request.status },
-      data: { status: "MATCHED", poolId: pool.id },
+      data: { status: "MATCHED", poolId: targetPoolId, farePaisa },
     });
     if (result.count === 0) {
       throw new HttpError(409, "This request was already accepted by another driver");
     }
 
-    return pool.id;
+    return targetPoolId;
   });
 
-  return toPublicRideRequest({ ...request, status: "MATCHED", poolId });
+  return toPublicRideRequest({ ...request, status: "MATCHED", poolId, farePaisa });
 }
 
 // Shared by driver-arrived/start/complete: loads the request's pool and
@@ -280,4 +334,46 @@ export async function listOwnDriverRideRequests(driverUserId: string) {
     orderBy: { createdAt: "asc" },
   });
   return requests.map(toPublicRideRequest);
+}
+
+// Driver-facing: the full passenger list per pool, not a flat list of
+// individual rides — this is what actually shows a driver that a pool is
+// shared, since listOwnDriverRideRequests (above) only gives one flat
+// list with no grouping.
+export async function listOwnPoolsWithPassengers(driverUserId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+
+  const pools = await prisma.pool.findMany({
+    where: { teslaId: tesla.id },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return Promise.all(
+    pools.map(async (pool) => {
+      const requests = await prisma.rideRequest.findMany({
+        where: { poolId: pool.id },
+        orderBy: { createdAt: "asc" },
+        include: { passenger: true },
+      });
+
+      return {
+        id: pool.id,
+        status: pool.status,
+        seatsTaken: pool.seatsTaken,
+        capacity: tesla.capacity,
+        passengers: requests.map((r) => ({
+          requestId: r.id,
+          passengerName: r.passenger.name,
+          pickupZoneId: r.pickupZoneId,
+          destinationZoneId: r.destinationZoneId,
+          seats: r.seats,
+          status: r.status,
+          farePaisa: r.farePaisa,
+        })),
+      };
+    })
+  );
 }

@@ -443,3 +443,53 @@ each wrapped in `prisma.$transaction` so they commit or roll back
 together — a losing accept's pool is now rolled back automatically
 instead of orphaned, and a request's status and its pool's status can
 no longer land in different transactions.
+
+### Two design questions asked before writing any pooling code (feature/tesla-pooling)
+
+The pooling spec had two real ambiguities that would have meant
+rebuilding the branch's core if guessed wrong, so both were checked with
+the person directly before any code was written, rather than picked
+silently:
+
+1. **Which Tesla does a brand-new pool go on?** `Pool.teslaId` is
+   required, but the spec's matching function took no Tesla/driver
+   parameter — it read as if matching might run automatically at
+   `POST /rides/request`, before any driver had acted, which would
+   require inventing a "which online driver gets this" rule the spec
+   never defined. Confirmed: matching runs inside a driver's own
+   `POST /rides/:id/accept` instead — no new selection logic needed,
+   reuses the existing accept flow exactly.
+2. **Does driver-arrived now lock the pool too?** The spec's phrasing
+   ("locks when driver marks arrival or starts trip") read as
+   potentially reversing a decision already made, implemented, tested,
+   and credited to the person on `feature/ride-lifecycle` — that the pool
+   stays `OPEN` through `driver-arrived` and only locks at `start`, so an
+   arrived-but-not-departed driver can still pick up one more compatible
+   rider. Confirmed the original decision stands; no code changed there.
+
+Neither answer required touching any already-shipped code, which is
+itself a small piece of evidence the earlier design decisions held up.
+
+### Concurrency race, live-verified twice — curl subprocess overhead masked it the first time
+
+Verifying the last-seat concurrent-join guard against the real database
+(not just the Jest mock), the first attempt — two `curl` calls
+backgrounded with `&` in the same shell — didn't reproduce the race at
+all: both requests got `200`, one joining the existing pool and one
+founding a brand-new one. Not a bug: each `curl` invocation is a separate
+OS process (fork + TCP handshake + DNS resolution), and that overhead is
+larger than the actual Postgres round-trip the race window depends on, so
+the first request's whole transaction had time to fully commit before the
+second's pre-transaction `findCompatibleOpenPool` read even ran — a
+correctly-serialized outcome, not a failure to guard against concurrency.
+
+Verified the actual race by firing both requests from a single Node
+process with `Promise.all(...)` instead (matching how the Jest test
+forces real interleaving) — that reproduced it immediately: one `200`
+(joined, discounted fare), one `409` ("This pool no longer has room for
+your request"), confirmed against the live database that `seatsTaken`
+never exceeded capacity either way. Worth recording as a concrete
+reminder that "I fired two curl commands and got 200/200" is not by
+itself evidence a race guard doesn't work — the *mechanism* used to
+produce concurrency matters, and shell-level parallelism isn't tight
+enough to reliably exercise a sub-millisecond database race.

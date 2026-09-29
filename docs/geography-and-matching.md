@@ -70,15 +70,24 @@ pickup zone, so this is `0 km` — trivially under the 1.5 km threshold.
 `2.43 km ≤ 3 km` — **both thresholds pass, so Nusrat and Rafiq are
 compatible.**
 
-Worth being precise about what this confirms: the seed data already has
-Nusrat and Rafiq assigned to the same `Pool` (`status: "MATCHED"`), but
-that assignment was hand-authored directly in the seed script before this
-branch's matching logic existed — `zonesAreCompatible()` was never called
-to produce it. What this calculation actually demonstrates is narrower:
-the rule, run independently against their real coordinates, *agrees with*
-that pre-existing grouping. It doesn't (yet) generate pool assignments
-itself — that wiring is `feature/ride-request` and `feature/tesla-pooling`
-territory, not this branch.
+Worth being precise about what this originally confirmed, on the branch
+that introduced `zonesAreCompatible()`: the seed data already had Nusrat
+and Rafiq assigned to the same `Pool`, but that assignment was
+hand-authored directly in the seed script before any matching logic
+existed — `zonesAreCompatible()` was never called to produce it. That
+calculation only demonstrated that the rule, run independently against
+their real coordinates, *agreed with* the pre-existing grouping.
+
+**Update (`feature/tesla-pooling`):** the rule is now actually wired into
+pool assignment. `findCompatibleOpenPool` (in
+[`apps/api/src/modules/rides/pool-matching.ts`](../apps/api/src/modules/rides/pool-matching.ts))
+calls `zonesAreCompatible()` for real every time a driver accepts a
+request, comparing it against a candidate pool's anchor. Verified live
+against fresh (non-seed) requests: a driver accepting Nusrat's
+Banani → Mohakhali request founds a pool; accepting Rafiq's
+Banani → Gulshan 1 request afterward joins that same pool, matching the
+hand-computed compatibility above exactly. See
+[`fare-model.md`](./fare-model.md) for the resulting per-passenger fares.
 
 For contrast, a pickup at Banani vs. a pickup at Farmgate is `4.55 km`
 apart — over the 1.5 km pickup threshold on its own, so that pair is
