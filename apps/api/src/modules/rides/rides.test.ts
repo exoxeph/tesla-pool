@@ -461,6 +461,26 @@ describe("ride lifecycle", () => {
     }
   });
 
+  it("lets only one of two concurrent completes win the same request", async () => {
+    const id = await createRequest("passenger-1");
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    await request(app).post(`/rides/${id}/accept`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${id}/driver-arrived`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${id}/start`).set("Authorization", driverToken);
+
+    const [resA, resB] = await Promise.all([
+      request(app).patch(`/rides/${id}/complete`).set("Authorization", driverToken),
+      request(app).patch(`/rides/${id}/complete`).set("Authorization", driverToken),
+    ]);
+
+    const statuses = [resA.status, resB.status].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    const finalRequest = rideRequests.find((r) => r.id === id)!;
+    expect(finalRequest.status).toBe("COMPLETED");
+    expect(pools.find((p) => p.id === finalRequest.poolId)?.status).toBe("COMPLETED");
+  });
+
   it("allows cancelling from MATCHED and DRIVER_ARRIVED", async () => {
     const matchedId = await createRequest("passenger-1");
     const driverToken1 = `Bearer ${tokenFor("driver-1", "DRIVER")}`;

@@ -238,11 +238,21 @@ export async function completeRide(driverUserId: string, requestId: string) {
     throw new HttpError(409, `Cannot complete a ride from ${request.status}`);
   }
 
-  const [updated] = await Promise.all([
-    prisma.rideRequest.update({ where: { id: requestId }, data: { status: "COMPLETED" } }),
-    prisma.pool.update({ where: { id: pool.id }, data: { status: "COMPLETED" } }),
-  ]);
-  return toPublicRideRequest(updated);
+  // Same shape as startRide: one transaction, conditional on the status
+  // just read, so request and pool status can't land in different
+  // outcomes and a concurrent action can't be silently overwritten.
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.rideRequest.updateMany({
+      where: { id: requestId, status: request.status },
+      data: { status: "COMPLETED" },
+    });
+    if (result.count === 0) {
+      throw new HttpError(409, "This request's status changed before completion could apply");
+    }
+    await tx.pool.update({ where: { id: pool.id }, data: { status: "COMPLETED" } });
+  });
+
+  return toPublicRideRequest({ ...request, status: "COMPLETED" });
 }
 
 // Not part of the original spec, but the driver dashboard needs a data
