@@ -55,10 +55,10 @@ export default function DashboardPage() {
             <Users className="h-5 w-5" />
           </span>
           <p className="mt-8 font-meter text-[9px] uppercase tracking-[.18em] text-forest-700">No invented matches</p>
-          <h2 className="mt-2 text-2xl font-semibold">Pools will appear when they&apos;re real.</h2>
+          <h2 className="mt-2 text-2xl font-semibold">Shared pools will appear when they&apos;re real.</h2>
           <p className="mt-3 leading-relaxed text-ink-500">
-            Your request is saved as soon as you submit it. Matching it into a shared pool with other
-            passengers is the next milestone — this space will show that once it exists.
+            A driver can already accept your request and drive it. Grouping several passengers'
+            requests into one shared trip is the next milestone — this space will show that once it exists.
           </p>
         </section>
         <section className="rounded-3xl bg-mango-100 p-6 sm:p-8">
@@ -66,11 +66,11 @@ export default function DashboardPage() {
           <h2 className="mt-3 font-display text-4xl font-semibold uppercase leading-[.9]">
             Request a ride.
             <br />
-            See your fare.
+            Track it live.
           </h2>
           <p className="mt-4 text-sm leading-relaxed text-ink-700">
-            Ride requests and fare estimates are real and saved. Route matching, pooling, and driver
-            assignment remain upcoming milestones.
+            Ride requests, fare estimates, driver acceptance, and trip progress are real and saved.
+            Grouping multiple passengers into one shared trip remains an upcoming milestone.
           </p>
         </section>
       </div>
