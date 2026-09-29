@@ -317,3 +317,44 @@ genuinely just that concern), but the *timestamps* don't support an
 "incremental work over time" narrative if asked about it directly. Worth
 disclosing plainly if asked in review/interview rather than letting the
 commit history imply something the timeline doesn't back up.
+
+### User-originated design decision — pool lock timing (feature/ride-lifecycle)
+
+Before any code existed for this branch, the user identified an
+unresolved design gap themselves: given two passengers requesting
+overlapping-but-different trips, when does a pool actually "lock in" and
+depart? Is there a wait, does the system risk missing a compatible
+second passenger by locking too early, or does capacity just fill
+immediately with no room for a driver to be flexible?
+
+The user then proposed the resolution themselves, not just the question:
+lock the pool when the driver marks the trip STARTED (driving), not at
+DRIVER_ARRIVED — reasoning that a driver who has arrived at a pickup but
+hasn't pulled away yet should still be able to pick up one more
+compatible rider before departing.
+
+This is worth recording as distinct from the phone-normalization bug or
+the same-zone fare bug above — those were gaps caught during review of
+already-shipped behavior. This one was original product design, done by
+the user before a single line of the lifecycle code was written. My role
+here was implementation and verification (the `isValidTransition` state
+map, the `/start` endpoint flipping `Pool.status` to `LOCKED` while
+`/driver-arrived` leaves it `OPEN`, and live confirmation against the
+real seeded driver Jashim that the pool does stay OPEN through
+driver-arrived and only locks at start) — not originating the rule.
+
+### Bug caught during live verification — stale dev server processes
+
+While verifying this branch end to end, `POST /rides/request` and
+later `/accept` returned 404 "Cannot POST" even though the routes were
+correctly registered in the code. Root cause: an old `ts-node-dev`
+process from an earlier session was still bound to port 4000, so
+`npm run dev` had been silently failing to bind (`EADDRINUSE`) while a
+stale server kept answering requests with pre-lifecycle route tables.
+The same thing happened on port 3000 for the Next.js dev server,
+compounded by the project's known stale-webpack-chunk issue after
+clearing `.next`. Caught by checking the actual process bound to each
+port (`Get-NetTCPConnection`) rather than assuming the code was wrong,
+killing the stale processes, and restarting clean — not a defect in the
+ride-lifecycle code itself, but worth logging since it could easily have
+been misdiagnosed as one.
