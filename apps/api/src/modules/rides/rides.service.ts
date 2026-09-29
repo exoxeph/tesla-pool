@@ -123,16 +123,28 @@ export async function acceptRideRequest(driverUserId: string, requestId: string)
     throw new HttpError(409, "Requested seats exceed this vehicle's capacity");
   }
 
-  const pool = await prisma.pool.create({
-    data: { teslaId: tesla.id, status: "OPEN", seatsTaken: request.seats },
+  // Runs as one transaction: the conditional updateMany only succeeds if
+  // the request is still exactly the status we read above, so two drivers
+  // accepting the same request at once can't both win. If this call loses
+  // that race, the pool it just created is rolled back with it instead of
+  // being left behind as an orphan nobody is actually in.
+  const poolId = await prisma.$transaction(async (tx) => {
+    const pool = await tx.pool.create({
+      data: { teslaId: tesla.id, status: "OPEN", seatsTaken: request.seats },
+    });
+
+    const result = await tx.rideRequest.updateMany({
+      where: { id: requestId, status: request.status },
+      data: { status: "MATCHED", poolId: pool.id },
+    });
+    if (result.count === 0) {
+      throw new HttpError(409, "This request was already accepted by another driver");
+    }
+
+    return pool.id;
   });
 
-  const updated = await prisma.rideRequest.update({
-    where: { id: requestId },
-    data: { status: "MATCHED", poolId: pool.id },
-  });
-
-  return toPublicRideRequest(updated);
+  return toPublicRideRequest({ ...request, status: "MATCHED", poolId });
 }
 
 // Shared by driver-arrived/start/complete: loads the request's pool and

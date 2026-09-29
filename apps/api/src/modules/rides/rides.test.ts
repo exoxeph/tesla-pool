@@ -31,8 +31,8 @@ let pools: MockPool[] = [];
 let nextId = 1;
 let nextPoolId = 1;
 
-jest.mock("../../db/prisma", () => ({
-  prisma: {
+jest.mock("../../db/prisma", () => {
+  const prismaMock: any = {
     zone: {
       findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) =>
         zoneById(id)
@@ -110,9 +110,49 @@ jest.mock("../../db/prisma", () => ({
           return row;
         }
       ),
+      // The conditional write every lifecycle mutation now uses: only
+      // updates a row whose status still matches what the caller read
+      // earlier. count === 0 means someone else's write got there first.
+      updateMany: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; status?: string };
+          data: Partial<MockRideRequest>;
+        }) => {
+          const row = rideRequests.find(
+            (r) => r.id === where.id && (where.status === undefined || r.status === where.status)
+          );
+          if (!row) return { count: 0 };
+          Object.assign(row, data);
+          return { count: 1 };
+        }
+      ),
     },
-  },
-}));
+  };
+
+  // Mimics Prisma's interactive transaction: runs the callback against the
+  // same mock client, and if it throws, rolls back any pools/rideRequests
+  // mutations made inside it — mirroring real rollback-on-throw semantics
+  // so tests can confirm a losing accept doesn't leave an orphaned pool.
+  prismaMock.$transaction = jest.fn(async (arg: unknown) => {
+    if (typeof arg === "function") {
+      const poolsSnapshot = pools.map((p) => ({ ...p }));
+      const rideRequestsSnapshot = rideRequests.map((r) => ({ ...r }));
+      try {
+        return await (arg as (tx: unknown) => Promise<unknown>)(prismaMock);
+      } catch (err) {
+        pools = poolsSnapshot;
+        rideRequests = rideRequestsSnapshot;
+        throw err;
+      }
+    }
+    return Promise.all(arg as Promise<unknown>[]);
+  });
+
+  return { prisma: prismaMock };
+});
 
 const JWT_SECRET = "test-secret"; // matches jest.setup.js
 function tokenFor(sub: string, role: string) {
@@ -340,6 +380,26 @@ describe("ride lifecycle", () => {
 
     expect(res.status).toBe(409);
     expect(pools).toHaveLength(0);
+  });
+
+  it("lets only one of two concurrent accepts win the same request, with no orphaned pool", async () => {
+    const id = await createRequest("passenger-1");
+
+    const [resA, resB] = await Promise.all([
+      request(app).post(`/rides/${id}/accept`).set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`),
+      request(app).post(`/rides/${id}/accept`).set("Authorization", `Bearer ${tokenFor("driver-2", "DRIVER")}`),
+    ]);
+
+    const statuses = [resA.status, resB.status].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    // The loser's speculatively created pool must have been rolled back —
+    // exactly one pool should exist, and it must be the one actually
+    // linked to the request.
+    expect(pools).toHaveLength(1);
+    const finalRequest = rideRequests.find((r) => r.id === id)!;
+    expect(finalRequest.status).toBe("MATCHED");
+    expect(finalRequest.poolId).toBe(pools[0].id);
   });
 });
 
