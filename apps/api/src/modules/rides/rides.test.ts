@@ -434,6 +434,33 @@ describe("ride lifecycle", () => {
     expect(finalRequest.status).toBe(arrivedRes.status === 200 ? "DRIVER_ARRIVED" : "CANCELLED");
   });
 
+  it("doesn't let start silently win against a concurrent cancel, and keeps request+pool in sync", async () => {
+    const id = await createRequest("passenger-1");
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    await request(app).post(`/rides/${id}/accept`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${id}/driver-arrived`).set("Authorization", driverToken);
+
+    const [startRes, cancelRes] = await Promise.all([
+      request(app).patch(`/rides/${id}/start`).set("Authorization", driverToken),
+      request(app).patch(`/rides/${id}/cancel`).set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`),
+    ]);
+
+    const statuses = [startRes.status, cancelRes.status].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    const finalRequest = rideRequests.find((r) => r.id === id)!;
+    if (startRes.status === 200) {
+      // Request and pool must have flipped together — never one without
+      // the other, since they now share one transaction.
+      expect(finalRequest.status).toBe("STARTED");
+      expect(pools.find((p) => p.id === finalRequest.poolId)?.status).toBe("LOCKED");
+    } else {
+      expect(finalRequest.status).toBe("CANCELLED");
+      // A losing start must not have locked the pool anyway.
+      expect(pools.find((p) => p.id === finalRequest.poolId)?.status).toBe("OPEN");
+    }
+  });
+
   it("allows cancelling from MATCHED and DRIVER_ARRIVED", async () => {
     const matchedId = await createRequest("passenger-1");
     const driverToken1 = `Bearer ${tokenFor("driver-1", "DRIVER")}`;

@@ -211,11 +211,25 @@ export async function startRide(driverUserId: string, requestId: string) {
   // The pool locks here, not at driver-arrived: a driver who has arrived
   // but not yet pulled away should still be able to pick up one more
   // compatible passenger.
-  const [updated] = await Promise.all([
-    prisma.rideRequest.update({ where: { id: requestId }, data: { status: "STARTED" } }),
-    prisma.pool.update({ where: { id: pool.id }, data: { status: "LOCKED" } }),
-  ]);
-  return toPublicRideRequest(updated);
+  //
+  // Request update and pool lock run in one transaction: previously these
+  // were two independent writes (Promise.all, not transactional), so a
+  // dropped write between them could leave a request marked STARTED with
+  // its pool still OPEN, or the reverse. The request update is also
+  // conditional on the status just read, guarding against a concurrent
+  // cancel landing in between.
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.rideRequest.updateMany({
+      where: { id: requestId, status: request.status },
+      data: { status: "STARTED" },
+    });
+    if (result.count === 0) {
+      throw new HttpError(409, "This request's status changed before start could apply");
+    }
+    await tx.pool.update({ where: { id: pool.id }, data: { status: "LOCKED" } });
+  });
+
+  return toPublicRideRequest({ ...request, status: "STARTED" });
 }
 
 export async function completeRide(driverUserId: string, requestId: string) {
