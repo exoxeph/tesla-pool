@@ -3,7 +3,11 @@ import { asyncHandler } from "../../common/asyncHandler";
 import { requireAuth, requireRole } from "../../common/auth-middleware";
 import { HttpError } from "../../common/httpError";
 import { createRideRequestSchema } from "./rides.schema";
-import { createRideRequest } from "./rides.service";
+import {
+  cancelRideRequest,
+  createRideRequest,
+  listOwnRideRequests,
+} from "./rides.service";
 
 export const ridesRouter = Router();
 
@@ -19,5 +23,23 @@ ridesRouter.post(
 
     const request = await createRideRequest(req.auth!.sub, parsed.data);
     res.status(201).json({ request });
+  })
+);
+
+ridesRouter.get(
+  "/rides/mine",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const requests = await listOwnRideRequests(req.auth!.sub);
+    res.json({ requests });
+  })
+);
+
+ridesRouter.patch(
+  "/rides/:id/cancel",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const request = await cancelRideRequest(req.params.id, req.auth!.sub);
+    res.json({ request });
   })
 );

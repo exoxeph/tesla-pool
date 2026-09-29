@@ -60,3 +60,37 @@ export async function createRideRequest(
 
   return toPublicRideRequest(request);
 }
+
+export async function listOwnRideRequests(passengerId: string) {
+  const requests = await prisma.rideRequest.findMany({
+    where: { passengerId },
+    orderBy: { createdAt: "desc" },
+  });
+  return requests.map(toPublicRideRequest);
+}
+
+export async function cancelRideRequest(
+  requestId: string,
+  passengerId: string
+) {
+  const request = await prisma.rideRequest.findUnique({
+    where: { id: requestId },
+  });
+
+  if (!request) {
+    throw new HttpError(404, "Ride request not found");
+  }
+  if (request.passengerId !== passengerId) {
+    throw new HttpError(403, "Forbidden");
+  }
+  if (request.status !== "REQUESTED") {
+    throw new HttpError(409, "Only a requested ride can be cancelled");
+  }
+
+  const cancelled = await prisma.rideRequest.update({
+    where: { id: requestId },
+    data: { status: "CANCELLED" },
+  });
+
+  return toPublicRideRequest(cancelled);
+}
