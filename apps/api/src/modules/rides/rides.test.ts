@@ -15,6 +15,8 @@ type MockRideRequest = {
   poolId: string | null;
   createdAt: Date;
 };
+type MockTesla = { id: string; driverId: string; label: string; capacity: number };
+type MockPool = { id: string; teslaId: string; status: string; seatsTaken: number };
 
 const ZONES: MockZone[] = Object.entries(TEST_ZONES).map(([name, coords]) => ({
   id: `zone-${name.toLowerCase().replace(/\s+/g, "-")}`,
@@ -24,13 +26,43 @@ const ZONES: MockZone[] = Object.entries(TEST_ZONES).map(([name, coords]) => ({
 const zoneById = (id: string) => ZONES.find((z) => z.id === id) ?? null;
 
 let rideRequests: MockRideRequest[] = [];
+let teslas: MockTesla[] = [];
+let pools: MockPool[] = [];
 let nextId = 1;
+let nextPoolId = 1;
 
 jest.mock("../../db/prisma", () => ({
   prisma: {
     zone: {
       findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) =>
         zoneById(id)
+      ),
+    },
+    tesla: {
+      findUnique: jest.fn(
+        async ({ where }: { where: { id?: string; driverId?: string } }) => {
+          if (where.id) return teslas.find((t) => t.id === where.id) ?? null;
+          if (where.driverId) return teslas.find((t) => t.driverId === where.driverId) ?? null;
+          return null;
+        }
+      ),
+    },
+    pool: {
+      create: jest.fn(async ({ data }: { data: Omit<MockPool, "id"> }) => {
+        const row: MockPool = { id: `pool-${nextPoolId++}`, ...data };
+        pools.push(row);
+        return row;
+      }),
+      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) =>
+        pools.find((p) => p.id === id) ?? null
+      ),
+      update: jest.fn(
+        async ({ where: { id }, data }: { where: { id: string }; data: Partial<MockPool> }) => {
+          const row = pools.find((p) => p.id === id);
+          if (!row) throw new Error("pool not found");
+          Object.assign(row, data);
+          return row;
+        }
       ),
     },
     rideRequest: {
@@ -46,10 +78,17 @@ jest.mock("../../db/prisma", () => ({
         return row;
       }),
       findMany: jest.fn(
-        async ({ where: { passengerId } }: { where: { passengerId: string } }) =>
-          rideRequests
-            .filter((r) => r.passengerId === passengerId)
-            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        async ({
+          where,
+        }: {
+          where: { passengerId?: string; status?: string; poolId?: { in: string[] } };
+        }) => {
+          let rows = rideRequests;
+          if (where.passengerId) rows = rows.filter((r) => r.passengerId === where.passengerId);
+          if (where.status) rows = rows.filter((r) => r.status === where.status);
+          if (where.poolId) rows = rows.filter((r) => r.poolId && where.poolId!.in.includes(r.poolId));
+          return [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+        }
       ),
       findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) =>
         rideRequests.find((r) => r.id === id) ?? null
@@ -82,7 +121,13 @@ const MOHAKHALI = ZONES.find((z) => z.name === "Mohakhali")!;
 
 beforeEach(() => {
   rideRequests = [];
+  teslas = [
+    { id: "tesla-1", driverId: "driver-1", label: "Bullet", capacity: 3 },
+    { id: "tesla-2", driverId: "driver-2", label: "Volt", capacity: 4 },
+  ];
+  pools = [];
   nextId = 1;
+  nextPoolId = 1;
 });
 
 describe("POST /rides/request", () => {
@@ -176,5 +221,121 @@ describe("PATCH /rides/:id/cancel", () => {
 
     const second = await request(app).patch(`/rides/${id}/cancel`).set("Authorization", token);
     expect(second.status).toBe(409);
+  });
+});
+
+async function createRequest(passengerId: string, seats = 1) {
+  const res = await request(app)
+    .post("/rides/request")
+    .set("Authorization", `Bearer ${tokenFor(passengerId, "PASSENGER")}`)
+    .send({ pickupZoneId: BANANI.id, destinationZoneId: MOHAKHALI.id, seats });
+  return res.body.request.id as string;
+}
+
+describe("ride lifecycle", () => {
+  it("runs the full valid sequence end to end: REQUESTED -> MATCHED -> DRIVER_ARRIVED -> STARTED -> COMPLETED", async () => {
+    const id = await createRequest("passenger-1");
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+
+    const accepted = await request(app).post(`/rides/${id}/accept`).set("Authorization", driverToken);
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.request.status).toBe("MATCHED");
+    expect(accepted.body.request.poolId).toBeTruthy();
+    expect(pools.find((p) => p.id === accepted.body.request.poolId)?.status).toBe("OPEN");
+
+    const arrived = await request(app).patch(`/rides/${id}/driver-arrived`).set("Authorization", driverToken);
+    expect(arrived.status).toBe(200);
+    expect(arrived.body.request.status).toBe("DRIVER_ARRIVED");
+    // Pool stays OPEN after driver-arrived — a compatible second passenger
+    // could still join before the driver actually starts driving.
+    expect(pools.find((p) => p.id === accepted.body.request.poolId)?.status).toBe("OPEN");
+
+    const started = await request(app).patch(`/rides/${id}/start`).set("Authorization", driverToken);
+    expect(started.status).toBe(200);
+    expect(started.body.request.status).toBe("STARTED");
+    // Only STARTED locks the pool.
+    expect(pools.find((p) => p.id === accepted.body.request.poolId)?.status).toBe("LOCKED");
+
+    const completed = await request(app).patch(`/rides/${id}/complete`).set("Authorization", driverToken);
+    expect(completed.status).toBe(200);
+    expect(completed.body.request.status).toBe("COMPLETED");
+    expect(pools.find((p) => p.id === accepted.body.request.poolId)?.status).toBe("COMPLETED");
+  });
+
+  it("rejects an invalid jump: calling /start while still REQUESTED", async () => {
+    const id = await createRequest("passenger-1");
+    const res = await request(app)
+      .patch(`/rides/${id}/start`)
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    // Not yet accepted, so this request has no pool at all.
+    expect(res.status).toBe(409);
+  });
+
+  it("rejects an invalid jump: calling /complete while still MATCHED", async () => {
+    const id = await createRequest("passenger-1");
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    await request(app).post(`/rides/${id}/accept`).set("Authorization", driverToken);
+
+    const res = await request(app).patch(`/rides/${id}/complete`).set("Authorization", driverToken);
+    expect(res.status).toBe(409);
+  });
+
+  it("rejects a driver acting on a request tied to a different driver's tesla (403)", async () => {
+    const id = await createRequest("passenger-1");
+    await request(app).post(`/rides/${id}/accept`).set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    const res = await request(app)
+      .patch(`/rides/${id}/driver-arrived`)
+      .set("Authorization", `Bearer ${tokenFor("driver-2", "DRIVER")}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("allows cancelling from MATCHED and DRIVER_ARRIVED", async () => {
+    const matchedId = await createRequest("passenger-1");
+    const driverToken1 = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    await request(app).post(`/rides/${matchedId}/accept`).set("Authorization", driverToken1);
+
+    const cancelMatched = await request(app)
+      .patch(`/rides/${matchedId}/cancel`)
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`);
+    expect(cancelMatched.status).toBe(200);
+    expect(cancelMatched.body.request.status).toBe("CANCELLED");
+
+    const arrivedId = await createRequest("passenger-1");
+    const driverToken2 = `Bearer ${tokenFor("driver-2", "DRIVER")}`;
+    await request(app).post(`/rides/${arrivedId}/accept`).set("Authorization", driverToken2);
+    await request(app).patch(`/rides/${arrivedId}/driver-arrived`).set("Authorization", driverToken2);
+
+    const cancelArrived = await request(app)
+      .patch(`/rides/${arrivedId}/cancel`)
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`);
+    expect(cancelArrived.status).toBe(200);
+    expect(cancelArrived.body.request.status).toBe("CANCELLED");
+  });
+
+  it("rejects cancelling once STARTED", async () => {
+    const id = await createRequest("passenger-1");
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    await request(app).post(`/rides/${id}/accept`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${id}/driver-arrived`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${id}/start`).set("Authorization", driverToken);
+
+    const res = await request(app)
+      .patch(`/rides/${id}/cancel`)
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`);
+    expect(res.status).toBe(409);
+  });
+
+  it("rejects accepting a request whose seats exceed the driver's tesla capacity", async () => {
+    // tesla-1 (driver-1) has capacity 3.
+    const id = await createRequest("passenger-1", 4);
+    const res = await request(app)
+      .post(`/rides/${id}/accept`)
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    expect(res.status).toBe(409);
+    expect(pools).toHaveLength(0);
   });
 });
