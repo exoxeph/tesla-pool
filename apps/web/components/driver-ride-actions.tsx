@@ -120,7 +120,7 @@ export function DriverRideActions() {
       ) : null}
 
       <div>
-        <p className="font-meter text-[9px] uppercase tracking-[.18em] text-forest-700">Nearby requests</p>
+        <p className="font-meter text-[9px] uppercase tracking-[.18em] text-forest-700">Open requests</p>
         <h2 className="mt-1 text-2xl font-semibold">Riders waiting</h2>
       </div>
       {available && available.length === 0 ? (

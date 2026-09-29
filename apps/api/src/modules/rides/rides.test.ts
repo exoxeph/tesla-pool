@@ -64,6 +64,9 @@ jest.mock("../../db/prisma", () => ({
           return row;
         }
       ),
+      findMany: jest.fn(async ({ where: { teslaId } }: { where: { teslaId: string } }) =>
+        pools.filter((p) => p.teslaId === teslaId)
+      ),
     },
     rideRequest: {
       create: jest.fn(async ({ data }: { data: Omit<MockRideRequest, "id" | "status" | "poolId" | "createdAt"> }) => {
@@ -337,5 +340,46 @@ describe("ride lifecycle", () => {
 
     expect(res.status).toBe(409);
     expect(pools).toHaveLength(0);
+  });
+});
+
+describe("GET /rides/available", () => {
+  it("excludes a request already matched to a driver", async () => {
+    const openId = await createRequest("passenger-1");
+    const matchedId = await createRequest("passenger-1");
+    await request(app)
+      .post(`/rides/${matchedId}/accept`)
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    const res = await request(app)
+      .get("/rides/available")
+      .set("Authorization", `Bearer ${tokenFor("driver-2", "DRIVER")}`);
+
+    expect(res.status).toBe(200);
+    const ids = res.body.requests.map((r: { id: string }) => r.id);
+    expect(ids).toContain(openId);
+    expect(ids).not.toContain(matchedId);
+  });
+});
+
+describe("GET /rides/driver-mine", () => {
+  it("only returns this driver's own trips, not another driver's", async () => {
+    const idForDriver1 = await createRequest("passenger-1");
+    await request(app)
+      .post(`/rides/${idForDriver1}/accept`)
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    const idForDriver2 = await createRequest("passenger-1");
+    await request(app)
+      .post(`/rides/${idForDriver2}/accept`)
+      .set("Authorization", `Bearer ${tokenFor("driver-2", "DRIVER")}`);
+
+    const res = await request(app)
+      .get("/rides/driver-mine")
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.requests).toHaveLength(1);
+    expect(res.body.requests[0].id).toBe(idForDriver1);
   });
 });

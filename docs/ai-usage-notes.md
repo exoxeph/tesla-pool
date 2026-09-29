@@ -358,3 +358,32 @@ port (`Get-NetTCPConnection`) rather than assuming the code was wrong,
 killing the stale processes, and restarting clean — not a defect in the
 ride-lifecycle code itself, but worth logging since it could easily have
 been misdiagnosed as one.
+
+### Caught in review, before merge — misleading "nearby" copy and missing scoping tests
+
+Two review questions caught real gaps that I hadn't flagged myself before
+declaring the branch ready:
+
+1. The driver dashboard's "Nearby requests" label implied geographic
+   proximity filtering. Checked the actual query in
+   `listAvailableRideRequests` (`rides.service.ts`) — it's
+   `where: { status: "REQUESTED" }`, system-wide, no lat/lng anywhere.
+   That's correct per the `feature/geography-zones` decision not to
+   model driver location at all, but the label was my own invented copy
+   (not in the original spec, which said "requests relevant to this
+   driver") and it overclaimed a capability the system doesn't have.
+   Renamed to "Open requests." A real instance of the MVP-honesty rule
+   catching UI copy that outran the backend.
+
+2. `GET /rides/available` and `GET /rides/driver-mine` — both added
+   mid-branch, outside the original endpoint list — had zero tests for
+   the "can't see another user's data" guarantee that's been explicitly
+   tested on every prior branch (passenger auth, driver status, ride
+   ownership). Added two tests: one confirming `/rides/available`
+   excludes a request already matched to a driver, one confirming
+   `/rides/driver-mine` only returns the calling driver's own trips, not
+   another driver's. Both passed on the first run — no bug found, but
+   the coverage gap itself was real and is exactly the kind of thing
+   that's easy to build correctly and still forget to test when an
+   endpoint gets added as a side effect of building a UI, rather than
+   from the spec's own test list.
