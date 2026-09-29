@@ -43,6 +43,23 @@ export async function postAuth<T>(
   return data as T;
 }
 
+export type Zone = { id: string; name: string; lat: number; lng: number };
+
+// GET /zones is public — no auth header, used by the ride-request form
+// to populate pickup/destination selects.
+export async function fetchZones(): Promise<Zone[]> {
+  const res = await fetch(`${API_URL}/zones`);
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    const message =
+      (data as AuthError | null)?.error ?? "Couldn't load zones.";
+    throw new Error(message);
+  }
+
+  return (data as { zones: Zone[] }).zones;
+}
+
 // For endpoints that require a bearer token (e.g. /drivers/me). Throws
 // when no token is stored, so callers can redirect to login.
 export async function authedFetch<T>(
