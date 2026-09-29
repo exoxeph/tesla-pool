@@ -41,14 +41,18 @@ export function RideRequestForm({ onCreated }: { onCreated: () => void }) {
       .finally(() => setIsLoadingZones(false));
   }, []);
 
+  const isSameZone =
+    pickupZoneId !== "" && pickupZoneId === destinationZoneId;
+
   const estimatedFarePaisa = useMemo(() => {
+    if (isSameZone) return null;
     const pickup = zones.find((z) => z.id === pickupZoneId);
     const destination = zones.find((z) => z.id === destinationZoneId);
     if (!pickup || !destination) return null;
 
     const distanceKm = equirectangularDistanceKm(pickup, destination);
     return estimateFarePaisa(distanceKm);
-  }, [zones, pickupZoneId, destinationZoneId]);
+  }, [zones, pickupZoneId, destinationZoneId, isSameZone]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -155,6 +159,12 @@ export function RideRequestForm({ onCreated }: { onCreated: () => void }) {
               <SeatPicker value={seats} onChange={setSeats} />
             </div>
 
+            {isSameZone ? (
+              <p role="alert" className="rounded-xl bg-danger-50 px-4 py-3 text-sm text-danger-600">
+                Pickup and destination must be different zones.
+              </p>
+            ) : null}
+
             <div className="mt-2 flex flex-col gap-4 border-t border-white/10 pt-5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-wider text-white/50">Estimated fare</p>
@@ -164,7 +174,7 @@ export function RideRequestForm({ onCreated }: { onCreated: () => void }) {
               </div>
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isSameZone}
                 className="focus-ring inline-flex items-center justify-center gap-3 rounded-full bg-lime-300 px-6 py-4 font-semibold text-forest-950 transition hover:bg-lime-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isSubmitting ? "Requesting..." : <>Request this ride <ArrowRight className="h-5 w-5" /></>}
