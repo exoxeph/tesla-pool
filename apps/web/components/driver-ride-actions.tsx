@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { authedFetch, fetchZones, type Zone } from "@/lib/auth-client";
 import { formatPaisa } from "@/lib/fare-estimate";
-import { MapPin, Users } from "@/components/icons";
+import { MapPin, Users, Wallet } from "@/components/icons";
 
 type RideRequest = {
   id: string;
@@ -12,6 +12,7 @@ type RideRequest = {
   seats: number;
   status: string;
   farePaisa: number | null;
+  paymentMethod: "CASH" | "TESLAPAY";
   poolId: string | null;
   createdAt: string;
 };
@@ -147,6 +148,10 @@ export function DriverRideActions({ refreshKey = 0 }: { refreshKey?: number }) {
                   {r.farePaisa === null ? "—" : formatPaisa(r.farePaisa)}
                 </span>
               </div>
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-500">
+                <Wallet className="h-3.5 w-3.5" />
+                {r.paymentMethod === "TESLAPAY" ? "TeslaPay wallet" : "Cash"}
+              </p>
               <button
                 type="button"
                 onClick={() => handleAccept(r.id)}
@@ -195,6 +200,10 @@ export function DriverRideActions({ refreshKey = 0 }: { refreshKey?: number }) {
                     {r.farePaisa === null ? "—" : formatPaisa(r.farePaisa)}
                   </span>
                 </div>
+                <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-500">
+                  <Wallet className="h-3.5 w-3.5" />
+                  {r.paymentMethod === "TESLAPAY" ? "TeslaPay wallet" : "Cash"}
+                </p>
                 {next ? (
                   <button
                     type="button"

@@ -772,6 +772,48 @@ also happens to show several ride requests left over from earlier live-
 verification scripts this session, left in rather than cleaned up first,
 since a cluttered-but-real list is more honest than a curated-empty one.
 
+### Caught — payment feature was backend-only, with no way for a user to reach it
+
+Asked directly "where is the payment system shown in the frontend UI?"
+Answer, verified by grepping `apps/web` for `paymentMethod`/`TESLAPAY`/
+`walletBalancePaisa` before responding rather than assuming the feature
+was wired end-to-end just because `feature/payment` had merged: the
+wallet-deduction logic in `rides.service.ts` and the `paymentMethod`
+field on `RideRequest` were real and tested (`rides.test.ts`), but
+`ride-request-form.tsx` never sent `paymentMethod` in its POST body, so
+every request silently defaulted to `CASH` and `TESLAPAY` was dead code
+from a user's perspective. Flagged this as a genuine MVP-honesty gap
+before building anything, rather than quietly patching it.
+
+### Built — payment UI (feature/payment-ui): CASH/TESLAPAY picker + wallet balance
+
+Added `GET /rides/wallet` (passenger-only, `requireRole("PASSENGER")`,
+following the existing `requireAuth`/`requireRole` pattern rather than a
+new check) so the frontend has something to read a balance from — no
+endpoint had ever existed to expose `User.walletBalancePaisa` to its own
+owner. Wired a CASH/TeslaPay toggle into `ride-request-form.tsx` (sends
+`paymentMethod` now), a wallet-balance readout, and a non-blocking
+insufficient-balance warning (request is still allowed; the server's
+existing 402 check is the real enforcement — the UI warning is advisory,
+not a second source of truth). Added the same `paymentMethod` badge to
+`my-rides.tsx` and `driver-ride-actions.tsx`, since both already received
+the field from the API and simply never displayed it.
+
+### Verified before trusting — seeded demo wallets were empty
+
+Live-testing the new wallet display showed ৳0.00 for the seeded demo
+passengers, which looked like a bug in the new `GET /rides/wallet`
+endpoint. Checked the database directly (`psql` against the Docker
+Postgres container) before assuming the endpoint was wrong, and found
+the real cause: `seed.ts`'s `user.upsert` calls use `update: {}`, so
+re-running the seed never re-applies `walletBalancePaisa` to a user that
+already exists, and this session's earlier `feature/payment` live
+verification had spent the demo passengers' balances down to 0 on a
+prior run. The endpoint was correct; the seed data was stale. Topped up
+one demo account directly via SQL for the live walkthrough rather than
+editing `seed.ts`'s upsert logic, since fixing the seed's update-on-
+existing-user behavior was out of scope for this change.
+
 ### Real overbooking bug, reported by the user from live demo data (fix/pool-capacity-overbooking)
 
 The user reported, from actually using the app: driver Jashim (Tesla

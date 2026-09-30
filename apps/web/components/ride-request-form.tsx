@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { authedFetch, fetchZones, type Zone } from "@/lib/auth-client";
+import { authedFetch, fetchWalletBalance, fetchZones, type Zone } from "@/lib/auth-client";
 import {
   equirectangularDistanceKm,
   estimateFarePaisa,
   formatPaisa,
 } from "@/lib/fare-estimate";
 import { SeatPicker } from "@/components/seat-picker";
-import { ArrowRight, MapPin } from "@/components/icons";
+import { ArrowRight, MapPin, Wallet } from "@/components/icons";
+
+type PaymentMethod = "CASH" | "TESLAPAY";
 
 type RideRequest = {
   id: string;
@@ -17,6 +19,7 @@ type RideRequest = {
   seats: number;
   status: string;
   farePaisa: number | null;
+  paymentMethod: PaymentMethod;
   poolId: string | null;
   createdAt: string;
 };
@@ -29,6 +32,8 @@ export function RideRequestForm({ onCreated }: { onCreated: () => void }) {
   const [pickupZoneId, setPickupZoneId] = useState("");
   const [destinationZoneId, setDestinationZoneId] = useState("");
   const [seats, setSeats] = useState(1);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
+  const [walletBalancePaisa, setWalletBalancePaisa] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -39,6 +44,13 @@ export function RideRequestForm({ onCreated }: { onCreated: () => void }) {
         setZonesError(err instanceof Error ? err.message : "Couldn't load zones.")
       )
       .finally(() => setIsLoadingZones(false));
+
+    // Best-effort — no top-up flow exists yet, so a failed fetch just
+    // means the balance stays unknown and TESLAPAY relies on the
+    // server's own insufficient-balance check instead.
+    fetchWalletBalance()
+      .then(setWalletBalancePaisa)
+      .catch(() => {});
   }, []);
 
   const isSameZone =
@@ -72,11 +84,12 @@ export function RideRequestForm({ onCreated }: { onCreated: () => void }) {
     try {
       await authedFetch<{ request: RideRequest }>("/rides/request", {
         method: "POST",
-        body: { pickupZoneId, destinationZoneId, seats },
+        body: { pickupZoneId, destinationZoneId, seats, paymentMethod },
       });
       setPickupZoneId("");
       setDestinationZoneId("");
       setSeats(1);
+      setPaymentMethod("CASH");
       onCreated();
     } catch (err) {
       setFormError(
@@ -159,6 +172,54 @@ export function RideRequestForm({ onCreated }: { onCreated: () => void }) {
               <p className="mb-2 text-xs uppercase tracking-wider text-white/55">Seats needed</p>
               <SeatPicker value={seats} onChange={setSeats} />
             </div>
+
+            <div>
+              <p className="mb-2 text-xs uppercase tracking-wider text-white/55">Pay with</p>
+              <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={paymentMethod === "CASH"}
+                  onClick={() => setPaymentMethod("CASH")}
+                  className={`focus-ring rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                    paymentMethod === "CASH"
+                      ? "border-lime-300 bg-lime-300 text-forest-950"
+                      : "border-white/15 bg-white/[0.06] text-white/75"
+                  }`}
+                >
+                  Cash
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={paymentMethod === "TESLAPAY"}
+                  onClick={() => setPaymentMethod("TESLAPAY")}
+                  className={`focus-ring flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                    paymentMethod === "TESLAPAY"
+                      ? "border-lime-300 bg-lime-300 text-forest-950"
+                      : "border-white/15 bg-white/[0.06] text-white/75"
+                  }`}
+                >
+                  <Wallet className="h-4 w-4" /> TeslaPay wallet
+                </button>
+              </div>
+              {paymentMethod === "TESLAPAY" ? (
+                <p className="mt-2 text-xs text-white/55">
+                  Wallet balance:{" "}
+                  {walletBalancePaisa === null ? "—" : formatPaisa(walletBalancePaisa)}
+                </p>
+              ) : null}
+            </div>
+
+            {paymentMethod === "TESLAPAY" &&
+            walletBalancePaisa !== null &&
+            estimatedFarePaisa !== null &&
+            walletBalancePaisa < estimatedFarePaisa ? (
+              <p role="alert" className="rounded-xl bg-danger-50 px-4 py-3 text-sm text-danger-600">
+                Your wallet balance won&apos;t cover this fare. You can still request — the
+                ride just can&apos;t be completed until the balance is enough, or you switch to cash.
+              </p>
+            ) : null}
 
             {isSameZone ? (
               <p role="alert" className="rounded-xl bg-danger-50 px-4 py-3 text-sm text-danger-600">

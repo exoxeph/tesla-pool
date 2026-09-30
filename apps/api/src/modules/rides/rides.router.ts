@@ -9,6 +9,7 @@ import {
   completeRide,
   createRideRequest,
   getOwnPoolDetail,
+  getOwnWalletBalance,
   getPoolStatusHistory,
   getRideRequestHistory,
   listAvailableRideRequests,
@@ -43,6 +44,16 @@ ridesRouter.get(
   asyncHandler(async (req, res) => {
     const requests = await listOwnRideRequests(req.auth!.sub);
     res.json({ requests });
+  })
+);
+
+ridesRouter.get(
+  "/rides/wallet",
+  requireAuth,
+  requireRole("PASSENGER"),
+  asyncHandler(async (req, res) => {
+    const wallet = await getOwnWalletBalance(req.auth!.sub);
+    res.json(wallet);
   })
 );
 
