@@ -910,3 +910,76 @@ describe("GET /rides/pools/mine", () => {
     expect(res.body.pools).toHaveLength(0);
   });
 });
+
+describe("GET /rides/pools/:id", () => {
+  it("returns all passengers currently in the pool, not just one", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const founderId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 1);
+    const founded = await acceptAs(driverToken, founderId);
+    const poolId = founded.body.request.poolId;
+    const joinerId = await createRequestWithRoute("passenger-2", BANANI.id, GULSHAN1.id, 1);
+    await acceptAs(driverToken, joinerId);
+
+    const res = await request(app).get(`/rides/pools/${poolId}`).set("Authorization", driverToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.pool.id).toBe(poolId);
+    expect(res.body.pool.status).toBe("OPEN");
+    expect(res.body.pool.passengers).toHaveLength(2);
+    expect(res.body.pool.passengers.map((p: { requestId: string }) => p.requestId).sort()).toEqual(
+      [founderId, joinerId].sort()
+    );
+  });
+
+  it("rejects a driver reading another driver's pool with 403, not that driver's data", async () => {
+    const driverAToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const driverBToken = `Bearer ${tokenFor("driver-2", "DRIVER")}`;
+    const requestId = await createRequest("passenger-1");
+    const accepted = await acceptAs(driverAToken, requestId);
+    const poolId = accepted.body.request.poolId;
+
+    const res = await request(app).get(`/rides/pools/${poolId}`).set("Authorization", driverBToken);
+
+    expect(res.status).toBe(403);
+    expect(res.body.pool).toBeUndefined();
+  });
+
+  it("returns 404 for a pool id that doesn't exist", async () => {
+    const res = await request(app)
+      .get("/rides/pools/does-not-exist")
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /rides/pools/history", () => {
+  it("returns only completed pools, most recent first, and never another driver's", async () => {
+    const driverAToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const driverBToken = `Bearer ${tokenFor("driver-2", "DRIVER")}`;
+
+    // driver-1: one completed trip, one still open (should be excluded).
+    const completedId = await createRequest("passenger-1");
+    await acceptAs(driverAToken, completedId);
+    await request(app).patch(`/rides/${completedId}/driver-arrived`).set("Authorization", driverAToken);
+    await request(app).patch(`/rides/${completedId}/start`).set("Authorization", driverAToken);
+    const completedRes = await request(app)
+      .patch(`/rides/${completedId}/complete`)
+      .set("Authorization", driverAToken);
+    const completedPoolId = completedRes.body.request.poolId;
+
+    const openId = await createRequest("passenger-1");
+    await acceptAs(driverAToken, openId);
+
+    // driver-2: unrelated completed trip, must never show up in driver-1's history.
+    const otherDriverRequestId = await createRequest("passenger-1");
+    await acceptAs(driverBToken, otherDriverRequestId);
+
+    const res = await request(app).get("/rides/pools/history").set("Authorization", driverAToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.pools).toHaveLength(1);
+    expect(res.body.pools[0].id).toBe(completedPoolId);
+    expect(res.body.pools[0].status).toBe("COMPLETED");
+  });
+});
