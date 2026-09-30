@@ -16,6 +16,7 @@ export default function DriverDashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isToggling, setIsToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!getAuthToken()) { router.push("/login?role=driver"); return; }
@@ -31,6 +32,10 @@ export default function DriverDashboardPage() {
     try {
       const data = await authedFetch<{ tesla: Tesla }>("/drivers/me/status", { method: "PATCH", body: { isOnline: !tesla.isOnline } });
       setTesla(data.tesla);
+      // Going online/offline changes which requests this driver is allowed
+      // to see (isOnline gates /rides/available) — refetch so "Riders
+      // waiting" doesn't keep showing stale pre-toggle data until a reload.
+      setRefreshKey((k) => k + 1);
     } catch (err) {
       setToggleError(err instanceof Error ? err.message : "Couldn't update your status. Check your connection and try again.");
     } finally { setIsToggling(false); }
@@ -53,7 +58,7 @@ export default function DriverDashboardPage() {
             <section className={`flex flex-col justify-between rounded-3xl border p-6 shadow-card sm:p-8 ${tesla.isOnline ? "border-lime-400 bg-lime-50" : "border-line bg-surface-raised"}`}><div><div className="flex items-center justify-between"><span className={`grid h-11 w-11 place-items-center rounded-2xl ${tesla.isOnline ? "bg-lime-300 text-forest-950" : "bg-surface-muted text-ink-500"}`}><MapPin className="h-5 w-5"/></span><span className="font-meter text-[9px] uppercase tracking-wider text-ink-500">Saved status</span></div><h2 className="mt-8 text-2xl font-semibold">{tesla.isOnline ? "Availability is on" : "Availability is off"}</h2><p className="mt-2 text-sm leading-relaxed text-ink-500">{tesla.isOnline ? "Your preference is saved. Riders waiting and your trips in progress are below." : "Turn this on to record that you're open to pooling when matching is introduced."}</p></div><div className="mt-8">{toggleError && <p role="alert" className="mb-3 rounded-xl bg-danger-50 p-3 text-xs text-danger-600">{toggleError}</p>}<button type="button" onClick={handleToggle} disabled={isToggling} className={`focus-ring w-full rounded-full px-6 py-3.5 text-sm font-semibold transition disabled:opacity-60 ${tesla.isOnline ? "border border-forest-900 bg-transparent text-forest-900 hover:bg-white" : "bg-forest-900 text-white hover:bg-forest-800"}`}>{isToggling ? "Updating..." : tesla.isOnline ? "Turn availability off" : "Turn availability on"}</button></div></section>
           </div>
 
-          <DriverRideActions />
+          <DriverRideActions refreshKey={refreshKey} />
 
           <section className="mt-8"><div><p className="font-meter text-[9px] uppercase tracking-[.18em] text-forest-700">MVP boundary</p><h2 className="mt-1 text-2xl font-semibold">What happens next</h2></div><div className="mt-5 grid gap-4 sm:grid-cols-3">{[[Users,"01","Group compatible riders into one shared trip"],[Clock,"02","Detect pickup and drop-off automatically"],[Shield,"03","Add trust and safety"]].map(([Icon,value,label])=>{const IconComponent=Icon as typeof Users; return <article key={label as string} className="rounded-2xl border border-line bg-surface-raised p-5"><div className="flex items-center justify-between"><span className="grid h-10 w-10 place-items-center rounded-xl bg-surface-muted text-forest-700"><IconComponent className="h-4 w-4"/></span><span className="font-display text-3xl font-semibold text-ink-500">{value as string}</span></div><p className="mt-5 text-sm text-ink-500">{label as string}</p></article>})}</div></section>
         </>
