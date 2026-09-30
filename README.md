@@ -44,8 +44,11 @@ assessment submission.
 
 ## Architecture diagram + ERD
 
-See [`docs/architecture.md`](docs/architecture.md) and
-[`docs/erd.md`](docs/erd.md).
+![Backend architecture diagram](docs/architecture-diagram.png)
+
+Full request-flow diagram (interactive version, plus source citations) in
+[`docs/architecture.md`](docs/architecture.md); entity-relationship diagram
+in [`docs/erd.md`](docs/erd.md).
 
 ## Tech stack & justification
 
