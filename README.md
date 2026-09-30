@@ -507,39 +507,7 @@ box count, so each topic below says what breaks first and why, using
 this codebase's actual patterns as the starting point rather than
 generic scaling boilerplate.
 
-```mermaid
-flowchart TD
-    U[Passengers and Drivers] --> CDN[CDN / Frontend on Vercel]
-    CDN --> LB[Load Balancer]
-
-    LB --> API1[API Instance 1]
-    LB --> API2[API Instance 2]
-    LB --> APIN[API Instance N]
-
-    API1 --> REDIS[Redis Cache]
-    API2 --> REDIS
-    APIN --> REDIS
-
-    API1 --> WS[Realtime / WebSocket Layer]
-    API2 --> WS
-    APIN --> WS
-
-    API1 --> QUEUE[Job Queue / Event Processing]
-    API2 --> QUEUE
-    APIN --> QUEUE
-
-    API1 --> DB[(PostgreSQL Primary)]
-    API2 --> DB
-    APIN --> DB
-
-    DB --> REPLICA[Read Replicas]
-    DB --> GEO[Geospatial Indexing / Matching]
-    DB --> OBS[Logs / Metrics / Monitoring]
-
-    QUEUE --> NOTIF[Notifications / Async Tasks]
-    REDIS --> MATCH[Fast availability and matching lookups]
-    WS --> LIVE[Live ride status updates]
-```
+![At-scale architecture: load balancer fanning out to N API instances, each reaching Redis, the WebSocket layer, the job queue, and Postgres primary; Postgres primary feeding read replicas, geospatial indexing, and logs/metrics](docs/viral-scaling-diagram.png)
 
 **Load balancing & horizontal scaling.** The MVP's biggest structural
 advantage here is one it already has for free: `requireAuth` derives
