@@ -28,6 +28,11 @@ enum RideStatus {
   CANCELLED
 }
 
+enum EventOutcome {
+  SUCCESS
+  CONFLICT
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
@@ -105,5 +110,31 @@ model RideRequest {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
+  statusEvents RideStatusEvent[]
+
   @@map("ride_requests")
+}
+
+// Append-only audit trail of every attempted RideRequest status
+// transition, including the losing side of a concurrency conflict — not
+// just the write that won. SUCCESS rows are inserted in the same
+// transaction as the write they describe, so they can never be out of
+// sync with what actually happened. CONFLICT rows can't be: by
+// definition the transaction that hit the conflict rolled back, so
+// nothing written inside it (an event row included) could have
+// survived. Those are written as a separate, immediate insert right
+// after the conflict is detected, outside the aborted transaction — see
+// rides.service.ts for exactly where the split happens.
+model RideStatusEvent {
+  id            String       @id @default(cuid())
+  rideRequestId String
+  rideRequest   RideRequest  @relation(fields: [rideRequestId], references: [id])
+  fromStatus    RideStatus
+  toStatus      RideStatus
+  actorUserId   String
+  actorRole     Role
+  outcome       EventOutcome
+  createdAt     DateTime     @default(now())
+
+  @@map("ride_status_events")
 }

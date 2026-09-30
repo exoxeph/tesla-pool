@@ -597,3 +597,87 @@ PowerShell, and the browser MCP tools simultaneously. Retried per the
 tool's own guidance (once immediately, then after a read-only action)
 rather than working around it, and it recovered — used to confirm the
 fix live rather than shipping on code review and a clean build alone.
+
+### Verified two "already built?" claims against actual code before touching anything (feature/history-audit, feature/payment)
+
+Asked to check whether payment and history/audit had already been built
+on `feature/payment` / `feature/history-audit` branches, per a detailed
+checklist (paymentMethod field, wallet balance, atomic deduction,
+StatusHistory table, per-transaction writes, read endpoints, conflict
+logging). Checked git branches (local and `origin`) before reading any
+code: neither branch existed, anywhere. Grepped the schema and all of
+`apps/api/src` for `paymentMethod`/`wallet`/`StatusHistory`/`RideEvent`
+— zero matches. Reported both features as fully unbuilt, with a
+line-by-line breakdown of what each checklist item would require, rather
+than guessing from memory or building anything speculatively. The user
+then explicitly scoped a fresh spec for both, cut from master, one branch
+at a time.
+
+### Design tension: a CONFLICT event can't live inside the transaction that produced it
+
+The spec asked to log the losing side of a concurrency conflict (e.g. the
+last-seat race) with `outcome: CONFLICT`, in the same transaction as
+every other status-changing write. Those two requirements are actually in
+tension: a Prisma interactive transaction rolls back *everything* it did
+if the callback throws — including an event row inserted earlier in that
+same callback, right before the throw. Logging a CONFLICT "inside" the
+transaction that hit it is therefore impossible by construction; if it
+succeeded, the transaction wouldn't have failed.
+
+Resolved by splitting the two outcomes instead of forcing one shape onto
+both: SUCCESS rows are inserted inside the same `$transaction` as the
+write they describe (co-committed, can never be out of sync with what
+actually happened); CONFLICT rows are written as a separate insert
+against the top-level `prisma` client, from a `catch` block, immediately
+after the transaction that hit the conflict has already rolled back. Not
+what the spec's wording literally described, but doing it as written
+would have silently dropped every CONFLICT row (the whole point of the
+feature) the moment it actually needed to fire — documented here and in
+the README's "Status audit log" section rather than left implicit.
+
+### Bug introduced and caught before commit — test mock aliasing hid a would-be silent-mutation bug
+
+First run of the extended "claims the last seat exactly once" test
+failed: the winning accept's logged event showed `fromStatus: "MATCHED"`
+instead of the expected `"REQUESTED"`. Root cause: the Jest mock's
+`rideRequest.findUnique` returned the *live array element* itself, not a
+detached copy — the opposite of real Prisma, which always hands back a
+plain, disconnected object. The service code reads `request.status` for
+`fromStatus` *after* awaiting the transaction's `updateMany` (which calls
+`Object.assign(row, data)` on that same live object), so by the time the
+event was logged, `request.status` had already been silently mutated to
+the write's own destination status.
+
+This specific failure was a mock-only artifact — real Prisma would not
+reproduce it. But acting on that alone (i.e. leaving the mock
+inaccurate and treating the test failure as a false negative) would have
+left the mock lying about Prisma's actual return semantics for every test
+written after this one, an inaccuracy worth fixing rather than papering
+over. Fixed two things, not one: (1) `rideRequest.findUnique` in the mock
+now returns a shallow copy, matching real Prisma; (2) every
+status-changing function in `rides.service.ts` now captures
+`const fromStatus = request.status` immediately after the initial read,
+before any transaction runs, so the code is correct by construction
+regardless of what shape a future mock or client returns — not just
+correct because today's real Prisma client happens to behave a
+particular way.
+
+### Live-verified against real Postgres, not just the mock
+
+Ran the migration (`prisma migrate dev`) against the actual Docker
+Postgres instance, regenerated the Prisma client, then drove a full live
+flow through the running dev server with a single Node script (signup,
+driver-signup, accept, driver-arrived, start, complete, both new history
+endpoints, and a 403 ownership check with a second passenger) — the same
+single-process-`fetch` approach adopted earlier this session after
+curl-subprocess overhead masked a real race in an earlier live check.
+Confirmed four SUCCESS events land in the right order with correct
+`fromStatus`/`toStatus` pairs, the pool-history endpoint aggregates
+events across every request in a pool, and the 403 ownership check holds
+against a real second signup — not just the Jest mock. Did not repeat a
+live-network concurrency race for the CONFLICT path specifically, since
+that exact class of race (last-seat join) is already covered by a
+genuinely-concurrent `Promise.all` test against the mock, and this
+session already has one documented case of curl-based "concurrency"
+turning out to be a methodology artifact rather than a real race — no
+need to re-learn that lesson.

@@ -9,6 +9,8 @@ import {
   completeRide,
   createRideRequest,
   getOwnPoolDetail,
+  getPoolStatusHistory,
+  getRideRequestHistory,
   listAvailableRideRequests,
   listOwnDriverRideRequests,
   listOwnPoolHistory,
@@ -48,7 +50,7 @@ ridesRouter.patch(
   "/rides/:id/cancel",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const request = await cancelRideRequest(req.params.id, req.auth!.sub);
+    const request = await cancelRideRequest(req.params.id, req.auth!.sub, req.auth!.role);
     res.json({ request });
   })
 );
@@ -78,7 +80,7 @@ ridesRouter.post(
   requireAuth,
   requireRole("DRIVER"),
   asyncHandler(async (req, res) => {
-    const request = await acceptRideRequest(req.auth!.sub, req.params.id);
+    const request = await acceptRideRequest(req.auth!.sub, req.params.id, req.auth!.role);
     res.json({ request });
   })
 );
@@ -88,7 +90,7 @@ ridesRouter.patch(
   requireAuth,
   requireRole("DRIVER"),
   asyncHandler(async (req, res) => {
-    const request = await markDriverArrived(req.auth!.sub, req.params.id);
+    const request = await markDriverArrived(req.auth!.sub, req.params.id, req.auth!.role);
     res.json({ request });
   })
 );
@@ -98,7 +100,7 @@ ridesRouter.patch(
   requireAuth,
   requireRole("DRIVER"),
   asyncHandler(async (req, res) => {
-    const request = await startRide(req.auth!.sub, req.params.id);
+    const request = await startRide(req.auth!.sub, req.params.id, req.auth!.role);
     res.json({ request });
   })
 );
@@ -108,7 +110,7 @@ ridesRouter.patch(
   requireAuth,
   requireRole("DRIVER"),
   asyncHandler(async (req, res) => {
-    const request = await completeRide(req.auth!.sub, req.params.id);
+    const request = await completeRide(req.auth!.sub, req.params.id, req.auth!.role);
     res.json({ request });
   })
 );
@@ -142,5 +144,29 @@ ridesRouter.get(
   asyncHandler(async (req, res) => {
     const pool = await getOwnPoolDetail(req.auth!.sub, req.params.id);
     res.json({ pool });
+  })
+);
+
+ridesRouter.get(
+  "/rides/pools/:id/history",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (req, res) => {
+    const events = await getPoolStatusHistory(req.auth!.sub, req.params.id);
+    res.json({ events });
+  })
+);
+
+// Registered last: "/rides/:id/history" has the same three-segment shape
+// as "/rides/pools/history" above, and Express matches routes in
+// registration order — putting this after every literal "/rides/pools/..."
+// route means a request for "/rides/pools/history" keeps hitting that
+// dedicated driver route instead of being swallowed here with id="pools".
+ridesRouter.get(
+  "/rides/:id/history",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const events = await getRideRequestHistory(req.auth!.sub, req.params.id);
+    res.json({ events });
   })
 );
