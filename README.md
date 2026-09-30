@@ -5,17 +5,36 @@ assessment submission.
 
 ## Summary
 
-> TODO — one-paragraph pitch once core flows (passenger request, driver
-> matching, pool lifecycle) are implemented.
+A ride-pooling backend and frontend for a small fleet of Teslas in Dhaka.
+A passenger requests a ride between two zones and gets a live fare
+estimate; a driver accepts it, which either founds a new shared pool or
+joins the passenger into a compatible one already open on that driver's
+own Tesla, with a 15% discount for whoever joins. The driver progresses
+the ride through arrival, start, and completion; every attempted status
+change — including a losing side of a concurrency race — is written to
+an append-only audit log; and on completion, a `TESLAPAY` request
+atomically deducts its fare from a simulated wallet, rejecting the
+completion outright if the balance won't cover it. All of this is real
+and running, not a mockup — see "Screenshots / GIFs" below for it in
+action.
 
 ## Problem statement
 
-> TODO — describe the ride-pooling problem this MVP solves and why it's
-> scoped to a small fleet of Teslas in Dhaka.
+Dhaka ride-hailing is dominated by single-passenger trips, which is
+expensive per rider and wasteful of seat capacity on routes many
+commuters already share. This MVP scopes the problem down to something
+answerable in an assessment timeframe: a **small, fixed fleet** of
+Teslas (not a general driver marketplace), **simple proximity-based
+pooling** (pickup-to-pickup and destination-to-destination within a
+fixed radius, not route-optimization or ML-based matching), and
+**one driver's own accept action** as the only place a pool ever forms
+(not a dispatch layer deciding which of several online drivers should
+get a request). Those three simplifications are what make "does pooling
+actually work, correctly, under concurrency" answerable at all in this
+scope — see "Key decisions/trade-offs" and "Next improvements" below for
+what a production version would need instead.
 
 ## Features implemented
-
-> TODO — full checklist, updated as feature branches merge.
 
 - Passenger and driver auth (signup/login, JWT)
 - Driver vehicle registration + online/offline status
@@ -40,7 +59,49 @@ assessment submission.
 
 ## Screenshots / GIFs
 
-> TODO — add once the passenger/driver UI exists.
+All captured live against the running app (real Next.js frontend, real
+Express API, real Postgres) via the chrome-devtools MCP tooling — not
+mockups. GIFs are built from real captured frames of actual state
+transitions (`ffmpeg`, no re-enactment).
+
+**Passenger: requesting a ride, live fare estimate**
+
+![Passenger request flow](docs/screenshots/passenger-request-flow.gif)
+
+Selecting pickup/destination computes a real fare estimate
+(`৳57.31` for Banani → Mohakhali) before submission; changing seats to 2
+recomputes it live (`৳114.62`, exactly double); submitting adds a new
+`REQUESTED` card to ride history immediately, no reload.
+
+**Driver: online/offline gating and the full ride lifecycle**
+
+![Driver lifecycle flow](docs/screenshots/driver-lifecycle-flow.gif)
+
+Toggling availability off empties "Riders waiting" instantly (in-progress
+trips stay untouched, per the "Driver-flow decisions" section above);
+toggling back on brings requests back with no manual refresh; accepting a
+request and progressing it through `driver-arrived → start → complete`
+updates each card's status and button in place, and a completed trip
+correctly drops out of "In progress."
+
+**Landing, auth, and dashboards**
+
+| | |
+|---|---|
+| ![Landing page](docs/screenshots/01-landing-hero.png) Landing page | ![Signup](docs/screenshots/02-signup.png) Signup |
+| ![Login](docs/screenshots/03-login.png) Login | ![Passenger dashboard](docs/screenshots/04-passenger-dashboard.png) Passenger dashboard |
+| ![Driver dashboard](docs/screenshots/05-driver-dashboard.png) Driver dashboard | ![Driver dashboard, mobile width](docs/screenshots/06-driver-dashboard-mobile.png) Driver dashboard, 390px mobile width |
+
+Full-resolution passenger dashboard and a 390px-wide passenger dashboard
+capture (confirming the mobile-first, single-column collapse required by
+`apps/web/DESIGN.md`) are also in
+[`docs/screenshots/`](docs/screenshots/).
+
+A caught-and-fixed note: capturing these screenshots surfaced two stale
+"not built yet" claims in the frontend copy (the landing page's hero card
+and the auth pages' sidebar) — both said matching/pooling were upcoming
+when they'd actually been merged weeks earlier. Fixed before these
+screenshots were taken; see `docs/ai-usage-notes.md`.
 
 ## Architecture diagram + ERD
 
@@ -62,8 +123,8 @@ in [`docs/erd.md`](docs/erd.md).
 | Auth       | JWT (jsonwebtoken + bcryptjs)     | Stateless auth suitable for a small API, simple to reason about for an assessment. |
 | Testing    | Jest + supertest (backend)       | Standard, fast HTTP-level testing for Express routes. |
 
-> TODO — expand trade-off reasoning as decisions are made (see "Key
-> decisions/trade-offs" below).
+Deeper trade-off reasoning for specific choices (money-as-integer,
+one-Tesla-per-driver, etc.) is in "Key decisions/trade-offs" below.
 
 ## Project structure
 
@@ -120,8 +181,18 @@ docker compose up --build
 This starts Postgres (with a healthcheck), the API, and the web app, wired
 together via `.env`. Web: http://localhost:3000, API: http://localhost:4000.
 
-> TODO — document running Prisma migrate/seed against the dockerized
-> Postgres from the host once that workflow is finalized.
+**Running Prisma migrate/seed against the dockerized Postgres from the
+host** (e.g. to apply a new migration without rebuilding the `api`
+container): `docker compose up postgres` starts only the database,
+exposed on the host at the port in `.env` (`POSTGRES_PORT`, default
+`5432`). From the host, with `apps/api` as the working directory and
+`DATABASE_URL` pointed at `localhost` rather than the in-network
+`postgres` hostname (`.env`'s own comment on `DATABASE_URL` explains
+this host-vs-container distinction), run `npx prisma migrate dev` and
+`npx prisma db seed` directly — no need to rebuild or restart the `api`
+container for a schema change, since it's the same physical database
+either way. This is exactly how every migration in this repo's history
+was applied and verified.
 
 ## Migration/seed instructions
 
@@ -149,14 +220,26 @@ All seeded users share the same demo password: `password123`
 
 ## Deployment URL
 
-> TODO — add once deployed.
+Not deployed — this submission runs locally only (see "Local setup" /
+"Docker instructions" above). No deployment URL to give honestly; not
+listing a fake one here.
 
 ## API overview
 
-> TODO — full request/response docs. Ride and pooling endpoints so far:
+Every route below requires `Authorization: Bearer <token>` except
+`POST /auth/signup`, `POST /auth/driver-signup`, `POST /auth/login`, and
+`GET /zones`. Identity is always derived from the verified JWT
+(`req.auth.sub`/`req.auth.role`), never trusted from the request body —
+see `apps/api/src/common/auth-middleware.ts`.
 
 | Method & path | Role | What it does |
 |---|---|---|
+| `POST /auth/signup` | — | Create a passenger account; returns a JWT |
+| `POST /auth/driver-signup` | — | Create a driver account **and** its Tesla in one transaction; returns a JWT |
+| `POST /auth/login` | — | Log in (passenger or driver); returns a JWT |
+| `GET /zones` | — | List all pickup/destination zones |
+| `GET /drivers/me` | Driver | This driver's own registered Tesla (id, label, capacity, `isOnline`) |
+| `PATCH /drivers/me/status` | Driver | Set `isOnline` — see "Driver-flow decisions" below for what this actually gates |
 | `POST /rides/request` | Passenger | Create a ride request; returns an *estimated* fare. Optional `paymentMethod` (`CASH`/`TESLAPAY`, defaults `CASH`) |
 | `GET /rides/mine` | Passenger | This passenger's own requests, with live status |
 | `PATCH /rides/:id/cancel` | Passenger | Cancel (allowed from `REQUESTED`/`MATCHED`/`DRIVER_ARRIVED`) |
@@ -169,7 +252,6 @@ All seeded users share the same demo password: `password123`
 | `GET /rides/pools/mine` | Driver | This driver's own pools, each with its **full passenger list** (pickup/destination/status/fare per passenger) |
 | `GET /rides/pools/:id` | Driver | Single-pool detail with full passenger list; 403/404 if it isn't this driver's pool |
 | `GET /rides/pools/history` | Driver | This driver's completed (and, if ever reached, cancelled) pools, most recent first |
-| `PATCH /drivers/me/status` | Driver | Set `isOnline` — see "Driver-flow decisions" below for what this actually gates |
 | `GET /rides/:id/history` | Passenger (owner) | Every attempted status transition for one ride, oldest first — see "Status audit log" below |
 | `GET /rides/pools/:id/history` | Driver (owner) | Every attempted status transition across every request that has belonged to this pool, oldest first |
 
@@ -347,9 +429,24 @@ online/offline gating and mid-trip continuity`).
 
 ## Key decisions/trade-offs
 
-> TODO — capture as they're made, e.g. why paisa-integers over
-> decimal/float for money, why one Tesla per driver.
-
+- **Money is always an integer count of paisa (`farePaisa`,
+  `walletBalancePaisa`), never a float or decimal.** Floating-point
+  arithmetic on money invites rounding drift that compounds silently
+  across many small transactions — a fare computed as `57.31` today and
+  `57.309999999999995` after a different code path touches it is exactly
+  the kind of bug that's invisible in a demo and real in production.
+  Storing the smallest currency unit as a plain integer (the same pattern
+  Stripe and most payment systems use) makes every arithmetic operation
+  exact, and `formatPaisa` on the frontend is the one place paisa becomes
+  a decimal-display string, not the other way around.
+- **One Tesla per driver** (`Tesla.driverId` is `@unique`), not a
+  driver-owns-many-vehicles model. The assessment scope is "a small fleet
+  of Teslas," and every endpoint that resolves "this driver's vehicle"
+  (`getOwnTesla`, `acceptRideRequest`, `listAvailableRideRequests`, etc.)
+  is simpler and unambiguous when there's exactly one Tesla to find
+  instead of a fleet-selection step nothing in the spec asked for. A
+  driver managing multiple vehicles is a real feature, just not this
+  one's.
 - **Matching, fare model, and concurrency approach**: see "Matching, fare,
   and concurrency (pooling)" above and the linked docs for the full
   reasoning behind each.
@@ -365,8 +462,6 @@ online/offline gating and mid-trip continuity`).
 
 ## Known limitations
 
-> TODO.
-
 - Pooling only ever considers a single driver's own open pools — there's
   no cross-driver "best available pool" ranking. A passenger's request
   can only join a pool on whichever driver happens to accept it.
@@ -378,8 +473,6 @@ online/offline gating and mid-trip continuity`).
   (`GET /rides/driver-mine`). Flagged, not silently left unmentioned.
 
 ## Next improvements
-
-> TODO.
 
 ### At scale
 
@@ -408,8 +501,88 @@ online/offline gating and mid-trip continuity`).
 
 ## AI Usage
 
-> TODO — disclose AI tool usage per assessment requirements.
+Written from [`docs/ai-usage-notes.md`](docs/ai-usage-notes.md), an
+append-only log kept *as things happened* through the whole build, not
+reconstructed from memory afterward. That file has the full detail (31
+entries); this section is the summary the assessment asks for.
+
+**Tools.** Claude Code for scaffolding, backend (Express/Prisma/zod/JWT),
+frontend (Next.js/Tailwind), tests, git workflow, and live verification
+against a real Postgres instance throughout. Impeccable (a Claude Code
+design plugin) for early homepage/auth-page visual direction and a
+mechanical design-quality detector. Archify for the source-cited
+architecture diagram. The chrome-devtools MCP tools for the screenshots
+and GIFs above, and for one live in-browser bug repro. Codex, separately,
+redid the entire frontend visual system after the Impeccable-driven
+direction didn't land (see "rejected" below).
+
+**One accepted suggestion.** The `requireAuth`/`requireRole` middleware
+(`apps/api/src/common/auth-middleware.ts`) — one shared pattern that
+verifies the JWT and derives identity from `req.auth`, never from a
+request body or param, built once on `feature/driver-auth` and flagged
+at the time as more important than that branch's actual feature,
+specifically so every later authenticated route (ride requests, pooling,
+audit log, payment) would reuse it instead of reimplementing per-route
+auth with subtly different bugs each time. It worked: every one of those
+later endpoints does reuse it, and the rule is now codified in
+`CLAUDE.md` as a standing project constraint.
+
+**One rejected/changed suggestion.** The homepage's first visual pass
+used generic Tailwind defaults with no real direction — rejected
+("looks horrendous"). The correction overcorrected, flooding the page
+with a solid green background — rejected again. The direction that
+actually shipped only emerged after two rounds of the AI optimizing for
+"technically has a design system" over "actually looks considered."
+Separately, and larger in scope: the whole Impeccable-tool-driven design
+process across several pages (a formal critique cycle, a written
+direction contract, a matching `DESIGN.md`) was rated 2/10 by the user
+after a further revision pass and replaced outright with a different
+tool's (Codex) redesign — a different visual system entirely, which is
+what's live today. Recorded plainly rather than omitted: a whole
+tool-driven approach was tried with real process behind it and still
+didn't land, which is a legitimate outcome to disclose, not a failure to
+hide.
+
+**Bugs the AI introduced, caught before or after shipping.** A phone-
+number validation regex that rejected real, validly-formatted numbers
+(no tolerance for spacing, dashes, or a `+880` prefix) until normalized
+first. A same-zone ride request (`Gulshan 1 → Gulshan 1`) silently
+charged the full base fare because a same-zone guard was deliberately
+scoped out as "keep simple" — caught by the user actually trying the
+product, then found to be *incompletely* fixed (the backend rejected it,
+but a separate frontend fare-preview code path kept showing a fare for
+the same broken input). A test mock's `findUnique` returned a live
+object reference instead of a snapshot (unlike real Prisma), silently
+mutating a value the service still held after a later write — caught by
+a failing assertion, fixed in both the mock and the service code
+defensively. Several stale "not built yet" claims in frontend copy
+(dashboard cards, the landing page's hero card, the auth pages' sidebar)
+that undersold features which had actually shipped on a merged branch —
+caught three separate times across the project, most recently while
+capturing the screenshots above.
+
+**Bugs/gaps the AI caught, not introduced.** A causal overclaim in
+`docs/geography-and-matching.md` implying the matching rule had produced
+the seed data's pool grouping, when that grouping was hand-authored
+before the matching code existed. A concurrency race in every one of
+`feature/ride-lifecycle`'s status-mutating endpoints, overlooked on a
+first pass and then found and fixed with tests before merge. A
+methodology bug in the AI's own live-verification approach — the first
+attempt to reproduce a last-seat concurrency race with backgrounded
+`curl` processes failed to reproduce it at all, because subprocess
+overhead serialized the requests past the actual race window; switched
+to firing both requests from a single Node process via `Promise.all`,
+which reliably reproduced the race. A design tension in this session's
+own audit-log spec: it asked for a losing concurrency conflict to be
+logged "in the same transaction" as the write it lost — impossible by
+construction, since a transaction that fails rolls back everything
+written inside it, an event row included. Resolved by splitting
+SUCCESS (co-committed with its write) from CONFLICT (a separate insert
+after the transaction rolls back) rather than silently doing the
+literal-but-impossible version and dropping every CONFLICT row.
 
 ## Demo video link
 
-> TODO.
+Not recorded — see "Screenshots / GIFs" above for the equivalent: real
+captured GIFs of the passenger request flow and the full driver
+lifecycle, built from actual browser state, not a scripted recording.

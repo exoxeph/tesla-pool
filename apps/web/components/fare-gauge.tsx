@@ -1,7 +1,9 @@
 import { ArrowRight, Car, MapPin, Users } from "@/components/icons";
 
-// This is deliberately a concept card, not a simulated live ride. The MVP
-// does not yet have enough marketplace data to promise ETAs, fares, or matches.
+// A static marketing preview of the request form, shown to logged-out
+// visitors — not a live form (that's RideRequestForm, post-login). Real
+// matching and fares are both live behind that login, so this card must
+// not claim they're still upcoming.
 export function FareGauge() {
   return (
     <div className="float-in relative mx-auto w-full max-w-[430px] rounded-3xl border border-white/10 bg-white/[0.08] p-4 shadow-lift backdrop-blur-sm [animation-delay:120ms] sm:p-5">
@@ -28,7 +30,7 @@ export function FareGauge() {
           <div className="rounded-xl bg-surface-muted p-4"><Car className="h-4 w-4 text-forest-700"/><p className="mt-3 text-sm font-medium">Offer empty seats</p><p className="mt-1 text-xs leading-relaxed text-ink-500">Join as a driver</p></div>
         </div>
 
-        <div className="mt-5 flex items-center justify-between border-t border-line pt-5"><span className="flex items-center gap-2 text-xs text-ink-500"><MapPin className="h-4 w-4"/>Matching is the next milestone</span><ArrowRight className="h-4 w-4 text-forest-700"/></div>
+        <div className="mt-5 flex items-center justify-between border-t border-line pt-5"><span className="flex items-center gap-2 text-xs text-ink-500"><MapPin className="h-4 w-4"/>Real matching &amp; fares — sign up to try</span><ArrowRight className="h-4 w-4 text-forest-700"/></div>
       </div>
       <div className="absolute -bottom-5 -left-4 rounded-2xl bg-mango-400 px-4 py-3 text-forest-950 shadow-card sm:-left-8"><p className="font-meter text-[8px] uppercase tracking-wider">Early-stage product</p><p className="font-display text-2xl font-semibold leading-none">Built with commuters</p></div>
     </div>
