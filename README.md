@@ -34,6 +34,9 @@ assessment submission.
 - Status audit log: every attempted status transition, including the
   losing side of a concurrency conflict, readable back per-ride and
   per-pool — see "Status audit log" below
+- Payment: `CASH`/`TESLAPAY` per ride request, with atomic wallet
+  deduction (and a rejected completion on insufficient balance) for
+  `TESLAPAY` — see "Payment" below
 
 ## Screenshots / GIFs
 
@@ -151,7 +154,7 @@ All seeded users share the same demo password: `password123`
 
 | Method & path | Role | What it does |
 |---|---|---|
-| `POST /rides/request` | Passenger | Create a ride request; returns an *estimated* fare |
+| `POST /rides/request` | Passenger | Create a ride request; returns an *estimated* fare. Optional `paymentMethod` (`CASH`/`TESLAPAY`, defaults `CASH`) |
 | `GET /rides/mine` | Passenger | This passenger's own requests, with live status |
 | `PATCH /rides/:id/cancel` | Passenger | Cancel (allowed from `REQUESTED`/`MATCHED`/`DRIVER_ARRIVED`) |
 | `GET /rides/available` | Driver | "Relevant requests" — pending (`REQUESTED`) requests, system-wide; empty if this driver is offline |
@@ -267,6 +270,26 @@ Full detail lives in dedicated docs — this is the map:
   request linked to a pool whose seat was never actually claimed. Verified
   both with an automated concurrent-request test and live, firing two
   truly simultaneous accepts at a real Postgres database.
+
+## Payment
+
+Each `RideRequest` has a `paymentMethod` (`CASH` or `TESLAPAY`, defaults
+to `CASH`, chosen by the passenger at request time), and each `User` has
+a simulated `walletBalancePaisa` — there's no real payment gateway, no
+top-up endpoint, and no payment UX beyond that one field, deliberately,
+per the assessment's scope. **Insufficient wallet balance rejects the
+completion** rather than letting the ride complete unpaid: on
+`PATCH /rides/:id/complete`, if the request's method is `TESLAPAY`, the
+fare is deducted from the passenger's wallet with a conditional
+`updateMany` (`WHERE walletBalancePaisa >= farePaisa`) inside the exact
+same transaction as the `COMPLETED` status flip — if the balance doesn't
+cover the fare, that `updateMany` matches zero rows, the whole
+transaction (status flip, pool update, wallet deduction alike) rolls
+back, and the endpoint returns `402` instead of a ride that finished
+without being paid for. `CASH` skips the wallet check entirely and just
+records the chosen method. Demo passengers are seeded with a starting
+balance in `prisma/seed.ts` so `TESLAPAY` is actually exercisable without
+a top-up flow.
 
 ## Driver-flow decisions
 

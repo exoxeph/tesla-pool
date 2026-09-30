@@ -681,3 +681,42 @@ genuinely-concurrent `Promise.all` test against the mock, and this
 session already has one documented case of curl-based "concurrency"
 turning out to be a methodology artifact rather than a real race — no
 need to re-learn that lesson.
+
+### Deliberate scope decision — seeding a demo wallet balance, not a top-up endpoint (feature/payment)
+
+The spec for `feature/payment` explicitly excluded a top-up UI/endpoint,
+which creates a real gap: with `walletBalancePaisa` defaulting to 0 on
+every `User` and no way to add funds, `TESLAPAY` would never actually
+succeed for any real account, only in tests. Resolved by seeding the
+three demo passengers in `prisma/seed.ts` with a starting balance
+(50000 paisa) — data, not a UI, so it doesn't reopen the "no top-up"
+scope decision, but it's what makes the feature demoable at all outside
+Jest. Flagged here rather than assumed silently, since it's a judgment
+call the spec didn't make explicitly.
+
+### Live-verified all three payment paths against real Postgres, including a case the app has no endpoint for
+
+Drove three live flows through the running dev server: a default-CASH
+completion (unaffected, as expected), a `TESLAPAY` completion with a
+zero wallet balance (correctly rejected with `402`, request confirmed
+still `STARTED` afterward — the whole transaction rolled back, not just
+the payment step), and a `TESLAPAY` completion with a funded wallet
+(deducted exactly the finalized fare: 20000 → 14269 paisa for a 5731
+paisa fare). Funding that third account required reaching around the
+app entirely — direct `UPDATE` via `docker exec ... psql`, not an API
+call — since no top-up endpoint exists by design. Worth naming
+explicitly: this is a test-only workaround for a real, documented
+product gap (no way to add funds), not a hidden backdoor in the app
+itself.
+
+### Bug caught in a first draft of the live-verification script, before it ran
+
+The live-check script's payment payload builder initially used
+`\`01900${suffix}\`.slice(0, 14)` (copied from an earlier phone-generation
+pattern in this same session) — 5-digit prefix plus a `Date.now()`-based
+suffix doesn't reliably land on the exact 11-digit
+`01[3-9]XXXXXXXX` format the backend's `phoneSchema` requires, and was
+caught by reading `auth.schema.ts`'s actual regex before running the
+script rather than after a confusing 400. Rewrote to build each phone
+number as a fixed 3-character prefix plus an 8-digit numeric suffix,
+verified against the regex by inspection before running.
