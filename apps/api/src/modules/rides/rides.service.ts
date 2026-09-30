@@ -90,6 +90,23 @@ export async function createRideRequest(
   passengerId: string,
   input: CreateRideRequestInput
 ) {
+  // A passenger can only physically be on one ride at a time — nothing
+  // here models scheduling a future trip. Block a new request while this
+  // passenger already has one that hasn't reached a terminal state
+  // (CANCELLED/COMPLETED), including one that's still just REQUESTED and
+  // not yet accepted by any driver: letting two requests sit open at once
+  // would let the same passenger get matched into two different Teslas
+  // for the same moment in time.
+  const existingActive = await prisma.rideRequest.findFirst({
+    where: { passengerId, status: { notIn: ["CANCELLED", "COMPLETED"] } },
+  });
+  if (existingActive) {
+    throw new HttpError(
+      409,
+      "You already have an active ride request. Cancel it or wait for it to complete before requesting another."
+    );
+  }
+
   const [pickupZone, destinationZone] = await Promise.all([
     prisma.zone.findUnique({ where: { id: input.pickupZoneId } }),
     prisma.zone.findUnique({ where: { id: input.destinationZoneId } }),

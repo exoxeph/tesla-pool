@@ -860,3 +860,41 @@ this fix), `tsc` build clean, and live-verified end to end against the
 real running dev API: reproduced the exact reported 1-then-2-then-2
 sequence with fresh signups against driver Jashim, and the third accept
 now returns `409` instead of silently overbooking the car.
+
+### Second overbooking-shaped gap, asked as a direct question — no cap on a passenger's own active requests (fix/one-active-request-per-passenger)
+
+Asked directly: "why can one passenger create more than one order while
+the current one is still running or not cancelled or not completed?"
+Checked `createRideRequest` (`rides.service.ts`) before answering rather
+than assuming a guard existed just because the previous branch had just
+fixed a related-sounding capacity bug: it does nothing but insert a new
+`RideRequest` row for whatever `passengerId` is on the JWT — no query
+anywhere in the creation path looks at that passenger's other requests.
+Grepped tests/README/docs for any existing "one active ride per
+passenger" rule first; found none, confirming this was an unaddressed
+gap, not a documented trade-off being second-guessed.
+
+Fixed with the same shape as the pool-capacity fix: one guard clause at
+the top of `createRideRequest` that queries for an existing `RideRequest`
+for this passenger with `status notIn [CANCELLED, COMPLETED]` and
+rejects with `409` if one exists — covering `REQUESTED` (not yet
+accepted) as well as `MATCHED`/`DRIVER_ARRIVED`/`STARTED`, since nothing
+in this app models scheduling a future trip, so a passenger genuinely
+can only be doing one ride at a time.
+
+Three existing tests broke on the first run — not because the guard was
+wrong, but because they used `createRequest("passenger-1")` twice in a
+row as pure scaffolding (testing driver-side/pool-history scoping, not
+passenger identity) and were relying on the exact gap just closed.
+Fixed by giving the second request in each a different passenger id
+rather than loosening the new guard, since the tests' actual intent
+never depended on both requests sharing a passenger. Added 5 new tests
+for the guard itself (rejects while REQUESTED/MATCHED/DRIVER_ARRIVED/
+STARTED, allows again after CANCELLED, allows again after COMPLETED,
+and confirms a *different* passenger is never blocked by someone else's
+active request). Full suite 71/71, `tsc` clean, and live-verified
+against the real dev API: a fresh signup's second request while the
+first is still open gets `409`, cancelling the first immediately
+unblocks a new one. No frontend change was needed — `ride-request-form.tsx`
+already surfaces the server's `error` message through its existing
+`formError` path.
