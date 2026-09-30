@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
-import { postAuth, saveAuthToken } from "@/lib/auth-client";
+import { postAuth, saveAuthRole, saveAuthToken } from "@/lib/auth-client";
 import { isValidPhone } from "@/lib/validation";
 import { AuthShell } from "@/components/auth-shell";
 import { ArrowRight } from "@/components/icons";
@@ -53,6 +53,7 @@ export function LoginForm() {
         password,
       });
       saveAuthToken(data.token);
+      saveAuthRole(data.user.role);
       router.push(data.user.role === "DRIVER" ? "/driver/dashboard" : "/dashboard");
     } catch (err) {
       // A wrong phone/password combo is a server-verified fact (not a

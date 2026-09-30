@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
-import { postAuth, saveAuthToken } from "@/lib/auth-client";
+import { postAuth, saveAuthRole, saveAuthToken } from "@/lib/auth-client";
 import { isValidPhone } from "@/lib/validation";
 import { SeatPicker } from "@/components/seat-picker";
 import { AuthShell } from "@/components/auth-shell";
@@ -72,6 +72,7 @@ export function SignupForm() {
           password,
         });
         saveAuthToken(data.token);
+        saveAuthRole(data.user.role);
         router.push("/dashboard");
       } else {
         const data = await postAuth<DriverSignupResponse>(
@@ -79,6 +80,7 @@ export function SignupForm() {
           { name, phone, password, vehicleLabel, capacity }
         );
         saveAuthToken(data.token);
+        saveAuthRole(data.user.role);
         router.push("/driver/dashboard");
       }
     } catch (err) {
