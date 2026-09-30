@@ -12,9 +12,11 @@ type MockRideRequest = {
   seats: number;
   status: string;
   farePaisa: number | null;
+  paymentMethod: string;
   poolId: string | null;
   createdAt: Date;
 };
+type MockUser = { id: string; walletBalancePaisa: number };
 type MockTesla = { id: string; driverId: string; label: string; capacity: number; isOnline: boolean };
 type MockPool = { id: string; teslaId: string; status: string; seatsTaken: number; createdAt: Date; updatedAt: Date };
 type MockStatusEvent = {
@@ -39,6 +41,7 @@ let rideRequests: MockRideRequest[] = [];
 let teslas: MockTesla[] = [];
 let pools: MockPool[] = [];
 let statusEvents: MockStatusEvent[] = [];
+let users: MockUser[] = [];
 let nextId = 1;
 let nextPoolId = 1;
 let nextEventId = 1;
@@ -286,6 +289,38 @@ jest.mock("../../db/prisma", () => {
         }
       ),
     },
+    user: {
+      // Conditional deduction: only decrements if the balance just read
+      // still covers the fare (mirrors the real Prisma updateMany used in
+      // completeRide's wallet check). count === 0 means insufficient
+      // balance, not a race — same shape as the other guarded writes in
+      // this mock, reused here for a different kind of guard.
+      updateMany: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; walletBalancePaisa?: { gte: number } };
+          data: { walletBalancePaisa: { decrement: number } };
+        }) => {
+          await tick();
+          const row = users.find(
+            (u) =>
+              u.id === where.id &&
+              (where.walletBalancePaisa === undefined ||
+                u.walletBalancePaisa >= where.walletBalancePaisa.gte)
+          );
+          if (!row) return { count: 0 };
+          row.walletBalancePaisa -= data.walletBalancePaisa.decrement;
+          return { count: 1 };
+        }
+      ),
+      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) => {
+        await tick();
+        const found = users.find((u) => u.id === id);
+        return found ? { ...found } : null;
+      }),
+    },
   };
 
   // Mimics Prisma's interactive transaction. Two genuinely concurrent
@@ -348,6 +383,30 @@ jest.mock("../../db/prisma", () => {
           }
         ),
       },
+      user: {
+        ...prismaMock.user,
+        updateMany: jest.fn(
+          async (args: {
+            where: { id: string; walletBalancePaisa?: { gte: number } };
+            data: { walletBalancePaisa: { decrement: number } };
+          }) => {
+            const target = users.find(
+              (u) =>
+                u.id === args.where.id &&
+                (args.where.walletBalancePaisa === undefined ||
+                  u.walletBalancePaisa >= args.where.walletBalancePaisa.gte)
+            );
+            const prevBalance = target?.walletBalancePaisa;
+            const result = await prismaMock.user.updateMany(args);
+            if (result.count > 0 && target && prevBalance !== undefined) {
+              undoStack.push(() => {
+                target.walletBalancePaisa = prevBalance;
+              });
+            }
+            return result;
+          }
+        ),
+      },
     };
   }
 
@@ -386,6 +445,14 @@ beforeEach(() => {
   ];
   pools = [];
   statusEvents = [];
+  // Generous default balance so tests that use TESLAPAY without caring
+  // about the wallet aren't affected; insufficient-balance tests
+  // override a specific passenger's entry before running.
+  users = [
+    { id: "passenger-1", walletBalancePaisa: 100000 },
+    { id: "passenger-2", walletBalancePaisa: 100000 },
+    { id: "passenger-3", walletBalancePaisa: 100000 },
+  ];
   nextId = 1;
   nextPoolId = 1;
   nextEventId = 1;
@@ -1121,5 +1188,77 @@ describe("GET /rides/pools/:id/history", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.events).toBeUndefined();
+  });
+});
+
+describe("payment", () => {
+  it("defaults to CASH when paymentMethod isn't sent, and never touches the wallet", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const requestId = await createRequest("passenger-1");
+    expect(rideRequests.find((r) => r.id === requestId)?.paymentMethod).toBe("CASH");
+
+    await acceptAs(driverToken, requestId);
+    await request(app).patch(`/rides/${requestId}/driver-arrived`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${requestId}/start`).set("Authorization", driverToken);
+    const completed = await request(app)
+      .patch(`/rides/${requestId}/complete`)
+      .set("Authorization", driverToken);
+
+    expect(completed.status).toBe(200);
+    expect(users.find((u) => u.id === "passenger-1")?.walletBalancePaisa).toBe(100000);
+  });
+
+  it("deducts the final fare from the wallet atomically on TESLAPAY completion", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const created = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: BANANI.id, destinationZoneId: MOHAKHALI.id, seats: 1, paymentMethod: "TESLAPAY" });
+    const requestId = created.body.request.id as string;
+    expect(created.body.request.paymentMethod).toBe("TESLAPAY");
+
+    await acceptAs(driverToken, requestId);
+    await request(app).patch(`/rides/${requestId}/driver-arrived`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${requestId}/start`).set("Authorization", driverToken);
+
+    const fare = rideRequests.find((r) => r.id === requestId)?.farePaisa!;
+    const balanceBefore = users.find((u) => u.id === "passenger-1")!.walletBalancePaisa;
+
+    const completed = await request(app)
+      .patch(`/rides/${requestId}/complete`)
+      .set("Authorization", driverToken);
+
+    expect(completed.status).toBe(200);
+    expect(users.find((u) => u.id === "passenger-1")?.walletBalancePaisa).toBe(balanceBefore - fare);
+  });
+
+  it("rejects completion on insufficient wallet balance, rolling back the whole transaction", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    // passenger-2's fare will exceed this tiny balance.
+    const poorPassenger = users.find((u) => u.id === "passenger-2")!;
+    poorPassenger.walletBalancePaisa = 100;
+
+    const created = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-2", "PASSENGER")}`)
+      .send({ pickupZoneId: BANANI.id, destinationZoneId: MOHAKHALI.id, seats: 1, paymentMethod: "TESLAPAY" });
+    const requestId = created.body.request.id as string;
+
+    await acceptAs(driverToken, requestId);
+    await request(app).patch(`/rides/${requestId}/driver-arrived`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${requestId}/start`).set("Authorization", driverToken);
+    const poolId = rideRequests.find((r) => r.id === requestId)?.poolId;
+
+    const completed = await request(app)
+      .patch(`/rides/${requestId}/complete`)
+      .set("Authorization", driverToken);
+
+    expect(completed.status).toBe(402);
+    // Nothing else moved: wallet untouched, request still STARTED (not
+    // COMPLETED), pool still LOCKED (not COMPLETED) — the whole
+    // transaction rolled back together, not just the payment step.
+    expect(users.find((u) => u.id === "passenger-2")?.walletBalancePaisa).toBe(100);
+    expect(rideRequests.find((r) => r.id === requestId)?.status).toBe("STARTED");
+    expect(pools.find((p) => p.id === poolId)?.status).toBe("LOCKED");
   });
 });

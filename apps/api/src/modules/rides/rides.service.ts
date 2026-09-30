@@ -502,6 +502,28 @@ export async function completeRide(
       if (result.count === 0) {
         throw new HttpError(409, "This request's status changed before completion could apply");
       }
+
+      // TESLAPAY fares are settled here, atomically with the completion
+      // itself — same transaction, same conditional-updateMany pattern
+      // (read-then-guarded-write) used everywhere else in this codebase
+      // for a safe check-and-deduct. If the wallet doesn't have enough,
+      // the whole transaction rolls back: a ride never completes "unpaid"
+      // and silently goes through. CASH just records the method — no
+      // wallet involved, nothing to check.
+      if (request.paymentMethod === "TESLAPAY") {
+        // farePaisa is always finalized by the time a request reaches
+        // STARTED (acceptRideRequest sets it, isValidTransition guards
+        // everything before that) — never null here in practice.
+        const farePaisa = request.farePaisa!;
+        const paymentResult = await tx.user.updateMany({
+          where: { id: request.passengerId, walletBalancePaisa: { gte: farePaisa } },
+          data: { walletBalancePaisa: { decrement: farePaisa } },
+        });
+        if (paymentResult.count === 0) {
+          throw new HttpError(402, "Insufficient wallet balance to complete this ride");
+        }
+      }
+
       await tx.pool.update({ where: { id: pool.id }, data: { status: "COMPLETED" } });
       await logStatusEvent(tx, {
         requestId,
