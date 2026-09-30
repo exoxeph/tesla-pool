@@ -162,6 +162,35 @@ All seeded users share the same demo password: `password123`
 | `GET /rides/pools/history` | Driver | This driver's completed (and, if ever reached, cancelled) pools, most recent first |
 | `PATCH /drivers/me/status` | Driver | Set `isOnline` — see "Driver-flow decisions" below for what this actually gates |
 
+## Ride lifecycle
+
+```
+REQUESTED → MATCHED → DRIVER_ARRIVED → STARTED → COMPLETED
+```
+
+`CANCELLED` is reachable from `REQUESTED`, `MATCHED`, or `DRIVER_ARRIVED` —
+**not** from `STARTED`. A trip that's already moving isn't a "never
+happened" cancellation anymore; once a driver has pressed Start, the only
+way forward is Complete. This is enforced in one place,
+[`isValidTransition`](apps/api/src/common/rideLifecycle.ts), and every
+endpoint that changes a `RideRequest`'s status goes through it rather than
+hand-rolling its own check — including `PATCH /rides/:id/cancel`, which
+additionally verifies the caller is the request's own passenger (403
+otherwise) before checking whether the current state is one of the three
+cancellable ones.
+
+**Why `GET /rides/mine` returns a passenger's full history in one list**,
+rather than a separate history endpoint the way the driver side has
+(`GET /rides/pools/history`): this is a deliberate simplification, not an
+oversight. A driver accumulates many pools over an open-ended career, so
+splitting "active" from "history" keeps that list usable. A passenger's
+own request list is naturally small — a handful of rides at most for this
+MVP — so one chronological list (most recent first, active and completed
+and cancelled together) is simpler for a passenger to scan than two tabs
+would be, with nothing lost. If passenger ride volume ever grew large
+enough that this stopped being true, splitting it would be the same
+change already made for drivers, not a new pattern to invent.
+
 ## Matching, fare, and concurrency (pooling)
 
 Full detail lives in dedicated docs — this is the map:
