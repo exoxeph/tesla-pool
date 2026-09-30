@@ -107,9 +107,12 @@ screenshots were taken; see `docs/ai-usage-notes.md`.
 
 ![Backend architecture diagram](docs/architecture-diagram.png)
 
+![Entity relationship diagram](docs/erd-diagram.png)
+
 Full request-flow diagram (interactive version, plus source citations) in
-[`docs/architecture.md`](docs/architecture.md); entity-relationship diagram
-in [`docs/erd.md`](docs/erd.md).
+[`docs/architecture.md`](docs/architecture.md); interactive entity-relationship
+diagram in [`docs/erd-diagram.html`](docs/erd-diagram.html), with schema notes in
+[`docs/erd.md`](docs/erd.md).
 
 ## Tech stack & justification
 
