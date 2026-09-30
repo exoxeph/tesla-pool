@@ -28,6 +28,9 @@ assessment submission.
   below
 - Driver-facing pool view (`GET /rides/pools/mine`): full passenger list
   per pool, not just one ride at a time
+- Driver-flow: online/offline actually gates new-request matching (not
+  just a stored flag), a single-pool detail view, and driver ride/pool
+  history — see "Driver-flow decisions" below
 
 ## Screenshots / GIFs
 
@@ -148,13 +151,16 @@ All seeded users share the same demo password: `password123`
 | `POST /rides/request` | Passenger | Create a ride request; returns an *estimated* fare |
 | `GET /rides/mine` | Passenger | This passenger's own requests, with live status |
 | `PATCH /rides/:id/cancel` | Passenger | Cancel (allowed from `REQUESTED`/`MATCHED`/`DRIVER_ARRIVED`) |
-| `GET /rides/available` | Driver | Pending (`REQUESTED`) requests, system-wide |
-| `POST /rides/:id/accept` | Driver | Accept a request — joins a compatible open pool on this driver's own tesla, or founds a new one; finalizes `farePaisa` |
+| `GET /rides/available` | Driver | "Relevant requests" — pending (`REQUESTED`) requests, system-wide; empty if this driver is offline |
+| `POST /rides/:id/accept` | Driver | Accept a request — joins a compatible open pool on this driver's own tesla, or founds a new one; finalizes `farePaisa`; rejected (409) if this driver is offline |
 | `PATCH /rides/:id/driver-arrived` | Driver | `MATCHED → DRIVER_ARRIVED` |
 | `PATCH /rides/:id/start` | Driver | `DRIVER_ARRIVED → STARTED`; locks the pool |
 | `PATCH /rides/:id/complete` | Driver | `STARTED → COMPLETED` |
 | `GET /rides/driver-mine` | Driver | This driver's own requests, flat list |
 | `GET /rides/pools/mine` | Driver | This driver's own pools, each with its **full passenger list** (pickup/destination/status/fare per passenger) |
+| `GET /rides/pools/:id` | Driver | Single-pool detail with full passenger list; 403/404 if it isn't this driver's pool |
+| `GET /rides/pools/history` | Driver | This driver's completed (and, if ever reached, cancelled) pools, most recent first |
+| `PATCH /drivers/me/status` | Driver | Set `isOnline` — see "Driver-flow decisions" below for what this actually gates |
 
 ## Matching, fare, and concurrency (pooling)
 
@@ -187,6 +193,57 @@ Full detail lives in dedicated docs — this is the map:
   request linked to a pool whose seat was never actually claimed. Verified
   both with an automated concurrent-request test and live, firing two
   truly simultaneous accepts at a real Postgres database.
+
+## Driver-flow decisions
+
+Two assumptions made building `feature/driver-flow`, stated explicitly
+because both are things a reviewer would reasonably ask to have defended:
+
+**Assumption 1 — "relevant requests" means all unmatched requests
+system-wide, not zone-filtered.**
+`GET /rides/available` (a driver's "relevant requests" list) returns
+every currently `REQUESTED` ride request, with no location or zone
+filtering. *Why:* nothing in the schema tracks a driver's location or a
+registered "zone" for a driver — `Tesla` has no `lat`/`lng`, and
+`docs/geography-and-matching.md` already documents "driver location: not
+modeled" as a deliberate simplification for passenger-to-passenger
+matching. Filtering "relevant" by driver zone would mean inventing a new
+concept (a driver's registered zone) and a new schema field for it,
+which wasn't asked for and would need its own design pass (what happens
+when a driver's actual location drifts from their "registered" one?).
+The simpler option — show everything, let the driver pick — is what the
+existing data actually supports, so that's what's implemented. No
+geography beyond passenger-to-passenger compatibility (the pickup/
+destination proximity rule in `pool-matching.ts`) exists anywhere in
+this codebase.
+
+*Where the `isOnline` gate actually lives:* the original task assumed
+`pool-matching.ts`'s matching function would need an `isOnline` filter
+added to "candidate pools/drivers." It doesn't — `findCompatibleOpenPool`
+never selects a driver; it only searches the *specific* driver's own
+already-open pools, and that driver is already known because they're the
+one calling `POST /rides/:id/accept`. There's no candidate-drivers query
+to filter there. The real enforcement point is `acceptRideRequest`
+itself (rejects with 409 if `tesla.isOnline` is false, before any
+matching runs), plus `listAvailableRideRequests` returning nothing to an
+offline driver so the UI doesn't show requests they can't act on.
+
+**Assumption 2 — going offline never touches a pool already in
+progress.**
+Toggling `isOnline` off only stops this driver from being able to
+`accept` *new* requests (`acceptRideRequest` now checks it, 409 if
+offline). It does **not** cancel, lock, or otherwise touch any pool this
+driver is already driving — `markDriverArrived`, `startRide`, and
+`completeRide` don't check `isOnline` at all, so a driver can toggle
+offline mid-trip (e.g. right after picking up their last rider for the
+day) and still finish that trip normally. *Why:* "offline" models
+"stop giving me new work," not "abandon what I'm already doing" — a
+driver mid-pool has real passengers physically expecting to be dropped
+off; silently stranding them because a status toggle was flipped would
+be a correctness bug, not a feature. Verified directly: a driver who
+goes offline after accepting a request can still call driver-arrived,
+start, and complete on that same request (`test(driver): cover
+online/offline gating and mid-trip continuity`).
 
 ## Key decisions/trade-offs
 
