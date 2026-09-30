@@ -55,10 +55,11 @@ export default function DashboardPage() {
             <Users className="h-5 w-5" />
           </span>
           <p className="mt-8 font-meter text-[9px] uppercase tracking-[.18em] text-forest-700">No invented matches</p>
-          <h2 className="mt-2 text-2xl font-semibold">Shared pools will appear when they&apos;re real.</h2>
+          <h2 className="mt-2 text-2xl font-semibold">Pools are real — you just can&apos;t see them here yet.</h2>
           <p className="mt-3 leading-relaxed text-ink-500">
-            A driver can already accept your request and drive it. Grouping several passengers'
-            requests into one shared trip is the next milestone — this space will show that once it exists.
+            When a driver accepts a compatible passenger's request into the same trip as yours, you
+            both get a lower fare automatically. This page doesn't visually show who you're sharing
+            with yet — that display is the next milestone, not the matching itself.
           </p>
         </section>
         <section className="rounded-3xl bg-mango-100 p-6 sm:p-8">
@@ -69,8 +70,8 @@ export default function DashboardPage() {
             Track it live.
           </h2>
           <p className="mt-4 text-sm leading-relaxed text-ink-700">
-            Ride requests, fare estimates, driver acceptance, and trip progress are real and saved.
-            Grouping multiple passengers into one shared trip remains an upcoming milestone.
+            Ride requests, fare estimates, driver acceptance, trip progress, and real multi-passenger
+            pooling (with an automatic discount when you share a trip) are all real and saved.
           </p>
         </section>
       </div>
