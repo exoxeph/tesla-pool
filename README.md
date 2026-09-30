@@ -31,6 +31,9 @@ assessment submission.
 - Driver-flow: online/offline actually gates new-request matching (not
   just a stored flag), a single-pool detail view, and driver ride/pool
   history — see "Driver-flow decisions" below
+- Status audit log: every attempted status transition, including the
+  losing side of a concurrency conflict, readable back per-ride and
+  per-pool — see "Status audit log" below
 
 ## Screenshots / GIFs
 
@@ -161,6 +164,8 @@ All seeded users share the same demo password: `password123`
 | `GET /rides/pools/:id` | Driver | Single-pool detail with full passenger list; 403/404 if it isn't this driver's pool |
 | `GET /rides/pools/history` | Driver | This driver's completed (and, if ever reached, cancelled) pools, most recent first |
 | `PATCH /drivers/me/status` | Driver | Set `isOnline` — see "Driver-flow decisions" below for what this actually gates |
+| `GET /rides/:id/history` | Passenger (owner) | Every attempted status transition for one ride, oldest first — see "Status audit log" below |
+| `GET /rides/pools/:id/history` | Driver (owner) | Every attempted status transition across every request that has belonged to this pool, oldest first |
 
 ## Ride lifecycle
 
@@ -190,6 +195,46 @@ and cancelled together) is simpler for a passenger to scan than two tabs
 would be, with nothing lost. If passenger ride volume ever grew large
 enough that this stopped being true, splitting it would be the same
 change already made for drivers, not a new pattern to invent.
+
+### Status audit log
+
+Every attempted status transition — accept, cancel, driver-arrived, start,
+complete — is recorded as a `RideStatusEvent` row: `fromStatus`,
+`toStatus`, who did it (`actorUserId`/`actorRole`), and an `outcome` of
+`SUCCESS` or `CONFLICT`. "Attempted" is the operative word: a losing side
+of a concurrency conflict (e.g. the second of two drivers racing to accept
+the same request, or the second of two passengers racing for the last
+seat in a pool) is logged too, with `outcome: CONFLICT` — not just the
+write that actually won. That's what makes this useful as a concurrency
+audit trail, not just a status-change log.
+
+The two outcomes are written differently, and that difference is
+deliberate rather than an inconsistency:
+
+- A `SUCCESS` row is inserted **inside the same transaction** as the write
+  it describes (the same `$transaction` that flips the request's status
+  and, where relevant, claims a pool seat or locks the pool). If any part
+  of that transaction fails, the event never lands either — it can never
+  describe a write that didn't actually happen.
+- A `CONFLICT` row **cannot** live inside that transaction, by definition:
+  the transaction that hit the conflict rolled back, so nothing written
+  inside it — an event row included — could have survived. It's written
+  as a separate, immediate insert right after the conflict is detected,
+  in a `catch` block outside the aborted transaction.
+
+Two read endpoints expose the log: `GET /rides/:id/history` (a passenger
+reading their own ride's timeline; 403 for anyone else's) and
+`GET /rides/pools/:id/history` (a driver reading every event across every
+request that's ever belonged to one of their pools; 403 for another
+driver's pool). Both use the same ownership pattern as the existing
+`PATCH /rides/:id/cancel` and `GET /rides/pools/:id` endpoints.
+
+One scoping note: the log only records races caught by the app's own
+conditional writes (`updateMany` returning `count === 0`) — not every
+early-rejection 409, like calling `/start` on a request that's still
+`REQUESTED`. That kind of rejection is a caller mistake against
+already-known state, not a race against a concurrent write, and nothing
+actually happened to the resource for an event to describe.
 
 ## Matching, fare, and concurrency (pooling)
 
