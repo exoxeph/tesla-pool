@@ -5,9 +5,9 @@ import { ArrowRight, ArrowUpRight, Car, MapPin, Shield, Users } from "@/componen
 import { ZoneStrip } from "@/components/zone-strip";
 
 const FEATURES = [
-  { icon: Users, number: "01", title: "Share your route", copy: "Tell us the commute you repeat and whether you want to ride or drive." },
-  { icon: Car, number: "02", title: "Build the network", copy: "Early members help reveal which shared routes would be genuinely useful." },
-  { icon: Shield, number: "03", title: "Unlock matching", copy: "Real pools appear only as matching and safety features become ready." },
+  { icon: Users, number: "01", title: "Request a ride", copy: "Pick a pickup and destination zone and see a real, computed fare before you send the request." },
+  { icon: Car, number: "02", title: "Get matched, not just a car", copy: "A driver accepts and pools you with a compatible rider on the same route — 15% off for whoever joins." },
+  { icon: Shield, number: "03", title: "Track it end to end", copy: "Every step — driver arrival, start, completion — is tracked and paid, in cash or the built-in wallet." },
 ];
 
 export default function HomePage() {
@@ -29,12 +29,12 @@ export default function HomePage() {
 
       <section className="border-b border-line bg-surface-raised">
         <div className="mx-auto grid max-w-7xl grid-cols-2 divide-x divide-line px-5 sm:grid-cols-4 sm:px-8">
-          {[['01','Create an account'],['02','Choose your role'],['03','Add your route'],['NEXT','Enable matching']].map(([value,label])=><div key={label} className="px-3 py-7 text-center sm:py-9"><p className="font-display text-4xl font-semibold leading-none text-forest-800 sm:text-5xl">{value}</p><p className="mt-1 text-xs text-ink-500">{label}</p></div>)}
+          {[['01','Create an account'],['02','Request or accept a ride'],['03','Get matched & pooled'],['04','Track it to completion']].map(([value,label])=><div key={label} className="px-3 py-7 text-center sm:py-9"><p className="font-display text-4xl font-semibold leading-none text-forest-800 sm:text-5xl">{value}</p><p className="mt-1 text-xs text-ink-500">{label}</p></div>)}
         </div>
       </section>
 
       <section className="mx-auto max-w-7xl px-5 py-16 sm:px-8 sm:py-24">
-        <div className="max-w-xl"><p className="font-meter text-[10px] uppercase tracking-[0.2em] text-forest-700">The MVP path</p><h2 className="mt-3 font-display text-5xl font-semibold uppercase leading-[.9] text-ink-950 sm:text-6xl">Start small.<br/>Learn the routes.</h2></div>
+        <div className="max-w-xl"><p className="font-meter text-[10px] uppercase tracking-[0.2em] text-forest-700">How it works</p><h2 className="mt-3 font-display text-5xl font-semibold uppercase leading-[.9] text-ink-950 sm:text-6xl">A real ride,<br/>start to finish.</h2></div>
         <div className="mt-12 grid gap-4 md:grid-cols-3">{FEATURES.map(({icon:Icon,number,title,copy},i)=><article key={title} className={`group rounded-3xl border p-6 transition duration-300 hover:-translate-y-1 hover:shadow-soft sm:p-8 ${i===1?"border-forest-800 bg-forest-800 text-white":"border-line bg-surface-raised text-ink-900"}`}><div className="flex items-center justify-between"><span className={`grid h-12 w-12 place-items-center rounded-2xl ${i===1?"bg-lime-300 text-forest-950":"bg-surface-muted text-forest-700"}`}><Icon className="h-5 w-5"/></span><span className={`font-meter text-xs ${i===1?"text-lime-300":"text-ink-500"}`}>{number}</span></div><h3 className="mt-10 text-xl font-semibold">{title}</h3><p className={`mt-2 leading-relaxed ${i===1?"text-white/60":"text-ink-500"}`}>{copy}</p></article>)}</div>
       </section>
 
