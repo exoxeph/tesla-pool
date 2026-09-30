@@ -136,6 +136,20 @@ export async function listOwnRideRequests(passengerId: string) {
   return requests.map(toPublicRideRequest);
 }
 
+// Wallet balance is only ever read here and deducted in completeRide's
+// transaction — there's no top-up endpoint, so this exists purely so the
+// passenger can see the seeded demo balance before picking TESLAPAY.
+export async function getOwnWalletBalance(passengerId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: passengerId },
+    select: { walletBalancePaisa: true },
+  });
+  if (!user) {
+    throw new HttpError(404, "User not found");
+  }
+  return { walletBalancePaisa: user.walletBalancePaisa };
+}
+
 export async function cancelRideRequest(
   requestId: string,
   passengerId: string,
