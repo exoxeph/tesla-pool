@@ -2,6 +2,7 @@ export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 const TOKEN_KEY = "dtp_token";
+const ROLE_KEY = "dtp_role";
 
 export function saveAuthToken(token: string) {
   try {
@@ -17,6 +18,34 @@ export function getAuthToken(): string | null {
     return window.localStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
+  }
+}
+
+// Stored alongside the token at login/signup so UI chrome (the header)
+// can know "passenger dashboard" vs "driver dashboard" without decoding
+// the JWT or making a network call just to render a link.
+export function saveAuthRole(role: string) {
+  try {
+    window.localStorage.setItem(ROLE_KEY, role);
+  } catch {
+    // see saveAuthToken
+  }
+}
+
+export function getAuthRole(): string | null {
+  try {
+    return window.localStorage.getItem(ROLE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function clearAuth() {
+  try {
+    window.localStorage.removeItem(TOKEN_KEY);
+    window.localStorage.removeItem(ROLE_KEY);
+  } catch {
+    // see saveAuthToken
   }
 }
 
