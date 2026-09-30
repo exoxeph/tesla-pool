@@ -366,6 +366,34 @@ export async function listOwnDriverRideRequests(driverUserId: string) {
   return requests.map(toPublicRideRequest);
 }
 
+// Shared shape for "a pool plus its full passenger list" — every
+// passenger's own pickup/destination/status/fare, not just whoever
+// joined most recently. Used by the mine/detail/history endpoints below
+// so the response shape only lives in one place.
+async function toPoolWithPassengers(pool: { id: string; status: string; seatsTaken: number }, capacity: number) {
+  const requests = await prisma.rideRequest.findMany({
+    where: { poolId: pool.id },
+    orderBy: { createdAt: "asc" },
+    include: { passenger: true },
+  });
+
+  return {
+    id: pool.id,
+    status: pool.status,
+    seatsTaken: pool.seatsTaken,
+    capacity,
+    passengers: requests.map((r) => ({
+      requestId: r.id,
+      passengerName: r.passenger.name,
+      pickupZoneId: r.pickupZoneId,
+      destinationZoneId: r.destinationZoneId,
+      seats: r.seats,
+      status: r.status,
+      farePaisa: r.farePaisa,
+    })),
+  };
+}
+
 // Driver-facing: the full passenger list per pool, not a flat list of
 // individual rides — this is what actually shows a driver that a pool is
 // shared, since listOwnDriverRideRequests (above) only gives one flat
@@ -381,29 +409,50 @@ export async function listOwnPoolsWithPassengers(driverUserId: string) {
     orderBy: { createdAt: "asc" },
   });
 
-  return Promise.all(
-    pools.map(async (pool) => {
-      const requests = await prisma.rideRequest.findMany({
-        where: { poolId: pool.id },
-        orderBy: { createdAt: "asc" },
-        include: { passenger: true },
-      });
+  return Promise.all(pools.map((pool) => toPoolWithPassengers(pool, tesla.capacity)));
+}
 
-      return {
-        id: pool.id,
-        status: pool.status,
-        seatsTaken: pool.seatsTaken,
-        capacity: tesla.capacity,
-        passengers: requests.map((r) => ({
-          requestId: r.id,
-          passengerName: r.passenger.name,
-          pickupZoneId: r.pickupZoneId,
-          destinationZoneId: r.destinationZoneId,
-          seats: r.seats,
-          status: r.status,
-          farePaisa: r.farePaisa,
-        })),
-      };
-    })
-  );
+// Single-pool detail, by id. Unlike listOwnPoolsWithPassengers (always
+// scoped to "my" tesla with no id to smuggle), this one takes an
+// attacker-controllable :id param, so ownership has to be checked
+// explicitly — 404 if the pool doesn't exist, 403 if it exists but
+// belongs to a different driver's tesla. Never reveals whether a pool
+// exists for a driver who doesn't own it beyond that 403/404 split.
+export async function getOwnPoolDetail(driverUserId: string, poolId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+
+  const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+  if (!pool) {
+    throw new HttpError(404, "Pool not found");
+  }
+  if (pool.teslaId !== tesla.id) {
+    throw new HttpError(403, "Forbidden");
+  }
+
+  return toPoolWithPassengers(pool, tesla.capacity);
+}
+
+// Ride/pool history: pools this driver has driven to a terminal state
+// (COMPLETED or CANCELLED), most recent first. Note: nothing in the
+// current codebase ever actually sets Pool.status to CANCELLED — only
+// individual RideRequests cancel, independent of their pool's overall
+// status — so in practice this only ever returns COMPLETED pools today.
+// Included anyway since CANCELLED is a real value of PoolStatus and a
+// history view should show it if it's ever reached, rather than baking
+// in today's reachability as a permanent assumption.
+export async function listOwnPoolHistory(driverUserId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+
+  const pools = await prisma.pool.findMany({
+    where: { teslaId: tesla.id, status: { in: ["COMPLETED", "CANCELLED"] } },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  return Promise.all(pools.map((pool) => toPoolWithPassengers(pool, tesla.capacity)));
 }

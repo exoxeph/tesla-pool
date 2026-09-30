@@ -16,7 +16,7 @@ type MockRideRequest = {
   createdAt: Date;
 };
 type MockTesla = { id: string; driverId: string; label: string; capacity: number; isOnline: boolean };
-type MockPool = { id: string; teslaId: string; status: string; seatsTaken: number; createdAt: Date };
+type MockPool = { id: string; teslaId: string; status: string; seatsTaken: number; createdAt: Date; updatedAt: Date };
 
 const ZONES: MockZone[] = Object.entries(TEST_ZONES).map(([name, coords]) => ({
   id: `zone-${name.toLowerCase().replace(/\s+/g, "-")}`,
@@ -58,9 +58,10 @@ jest.mock("../../db/prisma", () => {
       ),
     },
     pool: {
-      create: jest.fn(async ({ data }: { data: Omit<MockPool, "id" | "createdAt"> }) => {
+      create: jest.fn(async ({ data }: { data: Omit<MockPool, "id" | "createdAt" | "updatedAt"> }) => {
         await tick();
-        const row: MockPool = { id: `pool-${nextPoolId++}`, createdAt: new Date(), ...data };
+        const now = new Date();
+        const row: MockPool = { id: `pool-${nextPoolId++}`, createdAt: now, updatedAt: now, ...data };
         pools.push(row);
         return row;
       }),
@@ -73,16 +74,33 @@ jest.mock("../../db/prisma", () => {
           await tick();
           const row = pools.find((p) => p.id === id);
           if (!row) throw new Error("pool not found");
-          Object.assign(row, data);
+          Object.assign(row, data, { updatedAt: new Date() });
           return row;
         }
       ),
       findMany: jest.fn(
-        async ({ where }: { where: { teslaId: string; status?: string } }) => {
+        async ({
+          where,
+          orderBy,
+        }: {
+          where: { teslaId: string; status?: string | { in: string[] } };
+          orderBy?: { createdAt?: "asc" | "desc"; updatedAt?: "asc" | "desc" };
+        }) => {
           await tick();
           let rows = pools.filter((p) => p.teslaId === where.teslaId);
-          if (where.status) rows = rows.filter((p) => p.status === where.status);
-          return [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+          if (typeof where.status === "string") {
+            rows = rows.filter((p) => p.status === where.status);
+          } else if (where.status) {
+            const statusFilter = where.status;
+            rows = rows.filter((p) => statusFilter.in.includes(p.status));
+          }
+          const sortKey = orderBy?.updatedAt ? "updatedAt" : "createdAt";
+          const direction = orderBy?.updatedAt ?? orderBy?.createdAt ?? "asc";
+          return [...rows].sort((a, b) =>
+            direction === "desc"
+              ? b[sortKey].getTime() - a[sortKey].getTime()
+              : a[sortKey].getTime() - b[sortKey].getTime()
+          );
         }
       ),
       // Atomic seat claim: only increments if the pool is still OPEN and
@@ -105,6 +123,7 @@ jest.mock("../../db/prisma", () => {
           );
           if (!row) return { count: 0 };
           row.seatsTaken += data.seatsTaken.increment;
+          row.updatedAt = new Date();
           return { count: 1 };
         }
       ),
