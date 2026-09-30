@@ -17,6 +17,16 @@ type MockRideRequest = {
 };
 type MockTesla = { id: string; driverId: string; label: string; capacity: number; isOnline: boolean };
 type MockPool = { id: string; teslaId: string; status: string; seatsTaken: number; createdAt: Date; updatedAt: Date };
+type MockStatusEvent = {
+  id: string;
+  rideRequestId: string;
+  fromStatus: string;
+  toStatus: string;
+  actorUserId: string;
+  actorRole: string;
+  outcome: string;
+  createdAt: Date;
+};
 
 const ZONES: MockZone[] = Object.entries(TEST_ZONES).map(([name, coords]) => ({
   id: `zone-${name.toLowerCase().replace(/\s+/g, "-")}`,
@@ -28,8 +38,10 @@ const zoneById = (id: string) => ZONES.find((z) => z.id === id) ?? null;
 let rideRequests: MockRideRequest[] = [];
 let teslas: MockTesla[] = [];
 let pools: MockPool[] = [];
+let statusEvents: MockStatusEvent[] = [];
 let nextId = 1;
 let nextPoolId = 1;
+let nextEventId = 1;
 
 // Real Prisma calls round-trip to Postgres, so two concurrent requests
 // genuinely interleave their reads and writes. This mock has no such
@@ -168,9 +180,15 @@ jest.mock("../../db/prisma", () => {
           return sorted;
         }
       ),
+      // Returns a snapshot (a shallow copy), not the live array element —
+      // matching real Prisma, which always hands back a detached object.
+      // A caller that reads e.g. request.status after later awaiting an
+      // updateMany must see the value as it was at read time, not get
+      // silently mutated by a write that happened in between.
       findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) => {
         await tick();
-        return rideRequests.find((r) => r.id === id) ?? null;
+        const found = rideRequests.find((r) => r.id === id);
+        return found ? { ...found } : null;
       }),
       // Used by pool-matching.ts to find a pool's "anchor" — the earliest
       // still-active request in it. `include` attaches the real zone rows
@@ -233,6 +251,38 @@ jest.mock("../../db/prisma", () => {
           if (!row) return { count: 0 };
           Object.assign(row, data);
           return { count: 1 };
+        }
+      ),
+    },
+    rideStatusEvent: {
+      create: jest.fn(async ({ data }: { data: Omit<MockStatusEvent, "id" | "createdAt"> }) => {
+        await tick();
+        const row: MockStatusEvent = { id: `event-${nextEventId++}`, createdAt: new Date(), ...data };
+        statusEvents.push(row);
+        return row;
+      }),
+      findMany: jest.fn(
+        async ({
+          where,
+          orderBy,
+        }: {
+          where: { rideRequestId?: string | { in: string[] } };
+          orderBy?: { createdAt?: "asc" | "desc" };
+        }) => {
+          await tick();
+          let rows = statusEvents;
+          if (typeof where.rideRequestId === "string") {
+            rows = rows.filter((e) => e.rideRequestId === where.rideRequestId);
+          } else if (where.rideRequestId) {
+            const filter = where.rideRequestId;
+            rows = rows.filter((e) => filter.in.includes(e.rideRequestId));
+          }
+          const direction = orderBy?.createdAt ?? "asc";
+          return [...rows].sort((a, b) =>
+            direction === "desc"
+              ? b.createdAt.getTime() - a.createdAt.getTime()
+              : a.createdAt.getTime() - b.createdAt.getTime()
+          );
         }
       ),
     },
@@ -335,8 +385,10 @@ beforeEach(() => {
     { id: "tesla-2", driverId: "driver-2", label: "Volt", capacity: 4, isOnline: true },
   ];
   pools = [];
+  statusEvents = [];
   nextId = 1;
   nextPoolId = 1;
+  nextEventId = 1;
 });
 
 describe("POST /rides/request", () => {
@@ -863,6 +915,25 @@ describe("pooling", () => {
     // The loser's request was never touched — still REQUESTED, no pool.
     expect(rideRequests.find((r) => r.id === loserId)?.poolId).toBeNull();
     expect(rideRequests.find((r) => r.id === loserId)?.status).toBe("REQUESTED");
+
+    // The audit log records both the winning accept and the losing one —
+    // not just the write that actually landed.
+    const winnerEvent = statusEvents.find((e) => e.rideRequestId === winnerId);
+    const loserEvent = statusEvents.find((e) => e.rideRequestId === loserId);
+    expect(winnerEvent).toMatchObject({
+      fromStatus: "REQUESTED",
+      toStatus: "MATCHED",
+      actorUserId: "driver-1",
+      actorRole: "DRIVER",
+      outcome: "SUCCESS",
+    });
+    expect(loserEvent).toMatchObject({
+      fromStatus: "REQUESTED",
+      toStatus: "MATCHED",
+      actorUserId: "driver-1",
+      actorRole: "DRIVER",
+      outcome: "CONFLICT",
+    });
   });
 });
 
@@ -981,5 +1052,74 @@ describe("GET /rides/pools/history", () => {
     expect(res.body.pools).toHaveLength(1);
     expect(res.body.pools[0].id).toBe(completedPoolId);
     expect(res.body.pools[0].status).toBe("COMPLETED");
+  });
+});
+
+describe("GET /rides/:id/history", () => {
+  it("returns every attempted transition for one ride, oldest first", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const passengerToken = `Bearer ${tokenFor("passenger-1", "PASSENGER")}`;
+    const requestId = await createRequest("passenger-1");
+    await acceptAs(driverToken, requestId);
+    await request(app).patch(`/rides/${requestId}/driver-arrived`).set("Authorization", driverToken);
+
+    const res = await request(app).get(`/rides/${requestId}/history`).set("Authorization", passengerToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(2);
+    expect(res.body.events[0]).toMatchObject({ toStatus: "MATCHED", outcome: "SUCCESS" });
+    expect(res.body.events[1]).toMatchObject({ toStatus: "DRIVER_ARRIVED", outcome: "SUCCESS" });
+  });
+
+  it("a passenger cannot read another passenger's ride history (403)", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const requestId = await createRequest("passenger-1");
+    await acceptAs(driverToken, requestId);
+
+    const res = await request(app)
+      .get(`/rides/${requestId}/history`)
+      .set("Authorization", `Bearer ${tokenFor("passenger-2", "PASSENGER")}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.events).toBeUndefined();
+  });
+
+  it("returns 404 for a ride id that doesn't exist", async () => {
+    const res = await request(app)
+      .get("/rides/does-not-exist/history")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`);
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /rides/pools/:id/history", () => {
+  it("returns transitions for every request that has belonged to the pool", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const founderId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 1);
+    const founded = await acceptAs(driverToken, founderId);
+    const poolId = founded.body.request.poolId;
+    const joinerId = await createRequestWithRoute("passenger-2", BANANI.id, GULSHAN1.id, 1);
+    await acceptAs(driverToken, joinerId);
+
+    const res = await request(app).get(`/rides/pools/${poolId}/history`).set("Authorization", driverToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events.map((e: { rideRequestId: string }) => e.rideRequestId).sort()).toEqual(
+      [founderId, joinerId].sort()
+    );
+  });
+
+  it("rejects a driver reading another driver's pool history with 403", async () => {
+    const driverAToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const driverBToken = `Bearer ${tokenFor("driver-2", "DRIVER")}`;
+    const requestId = await createRequest("passenger-1");
+    const accepted = await acceptAs(driverAToken, requestId);
+    const poolId = accepted.body.request.poolId;
+
+    const res = await request(app).get(`/rides/pools/${poolId}/history`).set("Authorization", driverBToken);
+
+    expect(res.status).toBe(403);
+    expect(res.body.events).toBeUndefined();
   });
 });
