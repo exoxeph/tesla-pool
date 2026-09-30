@@ -499,6 +499,189 @@ online/offline gating and mid-trip continuity`).
   queue/serialization point per pool so accepts against the same pool
   don't all race the database simultaneously.
 
+## Bonus: "If Dhaka Tesla Pool Goes Viral" — scaling to 1M passengers, 100k drivers
+
+Not built — this is reasoning about what would actually change, not a
+rewrite of the MVP. The point of this section is the trade-offs, not the
+box count, so each topic below says what breaks first and why, using
+this codebase's actual patterns as the starting point rather than
+generic scaling boilerplate.
+
+```mermaid
+flowchart TD
+    U[Passengers and Drivers] --> CDN[CDN / Frontend on Vercel]
+    CDN --> LB[Load Balancer]
+
+    LB --> API1[API Instance 1]
+    LB --> API2[API Instance 2]
+    LB --> APIN[API Instance N]
+
+    API1 --> REDIS[Redis Cache]
+    API2 --> REDIS
+    APIN --> REDIS
+
+    API1 --> WS[Realtime / WebSocket Layer]
+    API2 --> WS
+    APIN --> WS
+
+    API1 --> QUEUE[Job Queue / Event Processing]
+    API2 --> QUEUE
+    APIN --> QUEUE
+
+    API1 --> DB[(PostgreSQL Primary)]
+    API2 --> DB
+    APIN --> DB
+
+    DB --> REPLICA[Read Replicas]
+    DB --> GEO[Geospatial Indexing / Matching]
+    DB --> OBS[Logs / Metrics / Monitoring]
+
+    QUEUE --> NOTIF[Notifications / Async Tasks]
+    REDIS --> MATCH[Fast availability and matching lookups]
+    WS --> LIVE[Live ride status updates]
+```
+
+**Load balancing & horizontal scaling.** The MVP's biggest structural
+advantage here is one it already has for free: `requireAuth` derives
+identity entirely from a verified JWT (`req.auth.sub`/`req.auth.role`),
+and no route keeps server-side session state. That statelessness is
+what makes "add more API instances behind a load balancer" actually
+trivial instead of a rewrite — any instance can serve any request.
+Horizontal scaling is a deploy-config change (more containers, an LB
+health check), not an architecture change.
+
+**Database indexing & read replicas.** At MVP scale, Prisma's default
+indexes (primary keys, the `@unique` constraints on `Tesla.driverId` and
+`User.phone`) are enough. At 1M passengers, the hot lookup paths need
+explicit composite indexes — `Pool(teslaId, status)` for the open-pool
+scan in `findCompatibleOpenPool`, `RideRequest(status)` for the
+"relevant requests" query, `RideRequest(poolId, status)` for pool
+detail/history. Reads (`GET /rides/mine`, `GET /rides/pools/history`,
+`GET /zones`) split off to read replicas; every write (`accept`,
+`cancel`, the lifecycle transitions) stays on the primary, since those
+all depend on the conditional-`updateMany` pattern's read-your-own-write
+guarantee — a replica lagging by even a few hundred ms would reintroduce
+exactly the race conditions this MVP already fixed.
+
+**Caching.** `GET /zones` is close to static reference data (nine fixed
+Dhaka zones) and is the easiest, highest-value cache: Redis with a long
+TTL, invalidated only on the rare admin edit. A driver's `isOnline` flag
+is a good second candidate — it's read on every matching-relevant
+request but only written on toggle. Ride/pool state itself is a worse
+caching candidate: it changes on every lifecycle step and any staleness
+directly risks a double-accept, which is the one failure mode this MVP
+was built specifically to prevent.
+
+**Geospatial search.** This is the one that most changes shape. The MVP
+deliberately scans a single driver's own OPEN pools in-process
+(`pool-matching.ts`, already documented as an MVP simplification in
+"Next improvements" above) — fine when one driver has a handful of open
+pools, not fine when the question becomes "which of 100k online
+drivers, anywhere in Dhaka, has a compatible pool." That needs a real
+spatial index — PostGIS `ST_DWithin`/a geohash or H3-bucketed lookup
+table — so compatible candidates come back from one indexed query
+instead of an application loop over every driver's pools.
+
+**Queues & events.** Every mutation today is synchronous request →
+response, including the two side effects that don't need to be on the
+critical path: the `RideStatusEvent` audit write (already isolated
+inside the same DB transaction as the state change, so it's cheap) and
+any future notification fan-out (push to the matched driver, push to
+the passenger on status change). At scale, notification delivery moves
+to a queue (SQS/similar) consumed by a separate worker — a slow push
+provider should never make `POST /rides/:id/accept` itself slow.
+
+**Real-time communication.** The current frontend is poll-based — see
+`DriverRideActions`'s `refreshKey` prop, which triggers a manual refetch
+of `/rides/available` and `/rides/driver-mine` after a driver's
+availability toggle (this was a real bug fixed earlier in this project:
+the UI didn't refetch on its own). Polling every few seconds is fine at
+MVP scale; at 1M passengers it's 1M clients hammering the API on a
+timer. That's exactly the shape WebSockets/SSE exist for — replace the
+poll with a per-user channel the server pushes to on actual state
+changes, which also lowers perceived latency ("Mark arrived" showing up
+instantly instead of on the next poll tick).
+
+**Rate limiting.** Needed at two levels: per-IP at the edge (basic abuse
+protection) and per-user on specific mutating endpoints — especially
+`POST /rides/:id/accept`, which is already this codebase's known
+concurrency hotspot (the Nusrat/Shirin last-seat race, documented and
+tested above). A driver or script hammering accept in a tight loop
+shouldn't be able to turn that hotspot into a denial-of-service against
+one pool.
+
+**Idempotency.** Distinct from the concurrency-safety this MVP already
+has. The conditional-`updateMany` pattern stops two *different* actors
+from both winning a race — it does nothing to stop the *same* client
+from double-submitting `POST /rides/request` after a timeout on a flaky
+mobile connection (a legitimate retry, not a race). That needs a
+client-supplied idempotency key stored against the created resource, so
+a retried request with the same key returns the original result instead
+of creating a second ride request.
+
+**Observability.** The `RideStatusEvent` log (`outcome: SUCCESS |
+CONFLICT`, see "Status audit log" above) is a genuinely useful head
+start most MVPs don't have — it's already a queryable business-event
+log, not just an access log. At scale, the natural extension is
+alerting directly on it: a spike in `CONFLICT` rate for one pool is a
+live signal of real contention, not something you'd need a separate APM
+tool to notice. Add on top of it: distributed tracing (OpenTelemetry)
+across the API → queue → DB path, structured logs shipped to a central
+aggregator, and dashboards for p99 latency and queue depth.
+
+**DB contention.** Already flagged above under "Next improvements": the
+conditional-`updateMany` pattern (every status/seat-count write in this
+codebase) holds up fine at MVP request rates but degrades under heavy
+concurrent load on one hot pool, where repeated 409-and-retry cycling
+becomes real contention. At scale that points toward either short-lived
+row-level locking (`SELECT ... FOR UPDATE`) around the seat-claim step,
+or a queue/serialization point per pool so accepts against the same
+pool don't all race the database at once.
+
+**Ride matching at scale.** Today a passenger only ever pools with
+whichever specific driver happens to accept their request — there's no
+cross-driver ranking (also already flagged above). At 1M passengers,
+"which pool, across every online driver in range, is the best match"
+becomes the real question, and answering it synchronously inside one
+HTTP request stops being reasonable. That's a dispatch/ranking service
+fed by the geospatial index above, likely computed by a background
+matching worker rather than inline in `acceptRideRequest`.
+
+**Retry/failure strategy.** Two different problems, worth keeping
+separate: async work (queued notifications, matching jobs) needs
+dead-letter queues and exponential backoff so a permanently-failing job
+doesn't retry forever or silently vanish; client-facing writes need the
+idempotency-key strategy above so a client's own retry is safe. Payment
+is a special case worth naming explicitly: `completeRide`'s wallet
+deduction is already atomic (one DB transaction, conditional on balance)
+rather than a multi-step saga, and that doesn't change at scale — it's
+still one row's balance and one row's status, just under more
+concurrent load, so it's the DB-contention problem above, not a new
+distributed-transaction problem.
+
+**Security.** The foundation is already the right shape: identity
+always comes from a verified JWT, never from the request body (the
+`requireAuth`/`requireRole` rule this whole project follows), and input
+is validated with zod at every boundary. At scale, add short-lived
+access tokens with refresh rotation (today's JWTs don't expire
+aggressively), a WAF/DDoS layer at the edge in front of the load
+balancer, and secret rotation for the DB and JWT signing keys. The
+`RideStatusEvent` audit log also does double duty here — it's already a
+forensic trail of who did what to which resource, which is exactly what
+a security incident review needs.
+
+**Deployment strategy.** `apps/api` already has a `Dockerfile` and this
+repo already documents a container-based local workflow
+(`docker-compose.yml`, see "Docker instructions" above) — at scale that
+same image is what runs behind the load balancer, N-times horizontally,
+with rolling or blue-green deploys instead of the single-container
+restart this MVP uses. Database migrations stay a deliberate, separate
+step from app deployment (already true today — see "Running Prisma
+migrate/seed against the dockerized Postgres from the host" above), not
+something that runs automatically on every container start, since a
+migration and a code deploy failing independently is much easier to
+reason about than both failing together.
+
 ## AI Usage
 
 Written from [`docs/ai-usage-notes.md`](docs/ai-usage-notes.md), an
