@@ -36,3 +36,8 @@ coverage/
 # ide
 .vscode/
 .idea/
+
+# archify working folders (receipts, screenshots, review passes) — the
+# actual deliverable (docs/architecture-diagram.png + .html) is copied
+# out of here and committed separately.
+.archify/
