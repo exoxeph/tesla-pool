@@ -33,14 +33,25 @@ enum EventOutcome {
   CONFLICT
 }
 
+enum PaymentMethod {
+  CASH
+  TESLAPAY
+}
+
 model User {
-  id           String   @id @default(cuid())
-  name         String
-  phone        String   @unique
-  passwordHash String
-  role         Role
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String   @id @default(cuid())
+  name              String
+  phone             String   @unique
+  passwordHash      String
+  role              Role
+  // Simulated wallet, TESLAPAY-only — no real gateway per the PRD. Only
+  // meaningful for passengers, but kept on User rather than a separate
+  // Passenger model since this schema has no such split. No top-up
+  // endpoint exists (explicitly out of scope); demo passengers are
+  // seeded with a starting balance in prisma/seed.ts.
+  walletBalancePaisa Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   tesla        Tesla?
   rideRequests RideRequest[]
@@ -105,6 +116,7 @@ model RideRequest {
   seats             Int        @default(1)
   status            RideStatus @default(REQUESTED)
   farePaisa         Int?
+  paymentMethod     PaymentMethod @default(CASH)
   poolId            String?
   pool              Pool?      @relation(fields: [poolId], references: [id])
   createdAt         DateTime   @default(now())
