@@ -1,3 +1,4 @@
+import type { Role } from "@prisma/client";
 import { calculatePerPassengerFarePaisa, estimateFarePaisa } from "../../common/fare";
 import { equirectangularDistanceKm } from "../../common/geo";
 import { HttpError } from "../../common/httpError";
@@ -5,6 +6,61 @@ import { isValidTransition } from "../../common/rideLifecycle";
 import { prisma } from "../../db/prisma";
 import { findCompatibleOpenPool } from "./pool-matching";
 import type { CreateRideRequestInput } from "./rides.schema";
+
+type EventActor = { id: string; role: string };
+
+function toPublicEvent(event: {
+  id: string;
+  rideRequestId: string;
+  fromStatus: string;
+  toStatus: string;
+  actorUserId: string;
+  actorRole: string;
+  outcome: string;
+  createdAt: Date;
+}) {
+  return {
+    id: event.id,
+    rideRequestId: event.rideRequestId,
+    fromStatus: event.fromStatus,
+    toStatus: event.toStatus,
+    actorUserId: event.actorUserId,
+    actorRole: event.actorRole,
+    outcome: event.outcome,
+    createdAt: event.createdAt,
+  };
+}
+
+// Every status-changing action below logs through here, twice: once for
+// the winning write (SUCCESS, inside the same transaction as the write
+// itself, via `client` = the tx), and once for a losing race (CONFLICT,
+// via `client` = the top-level `prisma`, called from a catch block after
+// the transaction that hit the conflict has already rolled back). A
+// CONFLICT row can never live inside the transaction it describes — if it
+// could, the transaction wouldn't have failed — so this function doesn't
+// try to unify the two call shapes beyond sharing the same data shape.
+async function logStatusEvent(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any,
+  args: {
+    requestId: string;
+    fromStatus: string;
+    toStatus: string;
+    actor: EventActor;
+    outcome: "SUCCESS" | "CONFLICT";
+  }
+) {
+  await client.rideStatusEvent.create({
+    data: {
+      rideRequestId: args.requestId,
+      fromStatus: args.fromStatus,
+      toStatus: args.toStatus,
+      actorUserId: args.actor.id,
+      actorRole: args.actor.role as Role,
+      outcome: args.outcome,
+    },
+  });
+}
 
 function toPublicRideRequest(request: {
   id: string;
@@ -79,7 +135,8 @@ export async function listOwnRideRequests(passengerId: string) {
 
 export async function cancelRideRequest(
   requestId: string,
-  passengerId: string
+  passengerId: string,
+  actorRole: string
 ) {
   const request = await prisma.rideRequest.findUnique({
     where: { id: requestId },
@@ -95,16 +152,45 @@ export async function cancelRideRequest(
     throw new HttpError(409, "This ride can no longer be cancelled");
   }
 
-  // Conditional on the status just read: guards against a concurrent
-  // driver action (accept/arrived/start) changing the status between this
-  // read and the write. If that happened, count is 0 and this fails
-  // instead of cancelling a ride that's already moved on underneath it.
-  const result = await prisma.rideRequest.updateMany({
-    where: { id: requestId, status: request.status },
-    data: { status: "CANCELLED" },
-  });
-  if (result.count === 0) {
-    throw new HttpError(409, "This ride can no longer be cancelled");
+  // Captured once, up front: the audit trail's fromStatus must reflect
+  // what was actually read before this attempt, not whatever `request`
+  // might reflect by the time an event gets logged later on.
+  const fromStatus = request.status;
+  const actor: EventActor = { id: passengerId, role: actorRole };
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Conditional on the status just read: guards against a concurrent
+      // driver action (accept/arrived/start) changing the status between
+      // this read and the write. If that happened, count is 0 and this
+      // fails instead of cancelling a ride that's already moved on
+      // underneath it.
+      const result = await tx.rideRequest.updateMany({
+        where: { id: requestId, status: fromStatus },
+        data: { status: "CANCELLED" },
+      });
+      if (result.count === 0) {
+        throw new HttpError(409, "This ride can no longer be cancelled");
+      }
+      await logStatusEvent(tx, {
+        requestId,
+        fromStatus,
+        toStatus: "CANCELLED",
+        actor,
+        outcome: "SUCCESS",
+      });
+    });
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 409) {
+      await logStatusEvent(prisma, {
+        requestId,
+        fromStatus,
+        toStatus: "CANCELLED",
+        actor,
+        outcome: "CONFLICT",
+      });
+    }
+    throw err;
   }
 
   return toPublicRideRequest({ ...request, status: "CANCELLED" });
@@ -117,7 +203,11 @@ export async function cancelRideRequest(
 // seat claim and the request's pool link are atomic within one
 // transaction: never link a request to a pool whose seat wasn't actually
 // claimed (avoids the orphaned-pool pattern fixed on feature/ride-lifecycle).
-export async function acceptRideRequest(driverUserId: string, requestId: string) {
+export async function acceptRideRequest(
+  driverUserId: string,
+  requestId: string,
+  actorRole: string
+) {
   const tesla = await prisma.tesla.findUnique({
     where: { driverId: driverUserId },
   });
@@ -170,49 +260,82 @@ export async function acceptRideRequest(driverUserId: string, requestId: string)
   // joining one that already has another active passenger (discounted).
   const farePaisa = calculatePerPassengerFarePaisa(distanceKm, request.seats, candidate !== null);
 
+  // Captured once, up front: the audit trail's fromStatus must reflect
+  // what was actually read before this attempt, not whatever `request`
+  // might reflect by the time an event gets logged later on.
+  const fromStatus = request.status;
+  const actor: EventActor = { id: driverUserId, role: actorRole };
+
   // Runs as one transaction: the seat claim (join an existing pool, or
   // create a new one) and the conditional request-link updateMany either
   // both land or neither does. The request-link is conditional on the
   // status just read above, so two drivers accepting the same request at
   // once can't both win — a losing call rolls back whatever seat claim or
   // pool creation it just made, instead of leaving it behind as an orphan.
-  const poolId = await prisma.$transaction(async (tx) => {
-    let targetPoolId: string;
+  // The audit event for a SUCCESS is inserted here too, so it rolls back
+  // together with everything else if a later step in this same
+  // transaction fails; a CONFLICT (caught below) is logged separately,
+  // since by the time we know it's a conflict this transaction has
+  // already rolled back and can't carry the event with it.
+  let poolId: string;
+  try {
+    poolId = await prisma.$transaction(async (tx) => {
+      let targetPoolId: string;
 
-    if (candidate) {
-      // Atomic seat claim: only increments if the pool is still OPEN and
-      // still has room for these seats. This is the Nusrat/Shirin
-      // last-seat race — two concurrent joins racing for the same
-      // remaining seat can't both succeed; the loser gets count === 0.
-      const joinResult = await tx.pool.updateMany({
-        where: {
-          id: candidate.id,
-          status: "OPEN",
-          seatsTaken: { lte: tesla.capacity - request.seats },
-        },
-        data: { seatsTaken: { increment: request.seats } },
-      });
-      if (joinResult.count === 0) {
-        throw new HttpError(409, "This pool no longer has room for your request");
+      if (candidate) {
+        // Atomic seat claim: only increments if the pool is still OPEN and
+        // still has room for these seats. This is the Nusrat/Shirin
+        // last-seat race — two concurrent joins racing for the same
+        // remaining seat can't both succeed; the loser gets count === 0.
+        const joinResult = await tx.pool.updateMany({
+          where: {
+            id: candidate.id,
+            status: "OPEN",
+            seatsTaken: { lte: tesla.capacity - request.seats },
+          },
+          data: { seatsTaken: { increment: request.seats } },
+        });
+        if (joinResult.count === 0) {
+          throw new HttpError(409, "This pool no longer has room for your request");
+        }
+        targetPoolId = candidate.id;
+      } else {
+        const pool = await tx.pool.create({
+          data: { teslaId: tesla.id, status: "OPEN", seatsTaken: request.seats },
+        });
+        targetPoolId = pool.id;
       }
-      targetPoolId = candidate.id;
-    } else {
-      const pool = await tx.pool.create({
-        data: { teslaId: tesla.id, status: "OPEN", seatsTaken: request.seats },
+
+      const result = await tx.rideRequest.updateMany({
+        where: { id: requestId, status: fromStatus },
+        data: { status: "MATCHED", poolId: targetPoolId, farePaisa },
       });
-      targetPoolId = pool.id;
-    }
+      if (result.count === 0) {
+        throw new HttpError(409, "This request was already accepted by another driver");
+      }
 
-    const result = await tx.rideRequest.updateMany({
-      where: { id: requestId, status: request.status },
-      data: { status: "MATCHED", poolId: targetPoolId, farePaisa },
+      await logStatusEvent(tx, {
+        requestId,
+        fromStatus,
+        toStatus: "MATCHED",
+        actor,
+        outcome: "SUCCESS",
+      });
+
+      return targetPoolId;
     });
-    if (result.count === 0) {
-      throw new HttpError(409, "This request was already accepted by another driver");
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 409) {
+      await logStatusEvent(prisma, {
+        requestId,
+        fromStatus,
+        toStatus: "MATCHED",
+        actor,
+        outcome: "CONFLICT",
+      });
     }
-
-    return targetPoolId;
-  });
+    throw err;
+  }
 
   return toPublicRideRequest({ ...request, status: "MATCHED", poolId, farePaisa });
 }
@@ -245,75 +368,158 @@ async function loadOwnedRequest(driverUserId: string, requestId: string) {
   return { request, pool };
 }
 
-export async function markDriverArrived(driverUserId: string, requestId: string) {
+export async function markDriverArrived(
+  driverUserId: string,
+  requestId: string,
+  actorRole: string
+) {
   const { request } = await loadOwnedRequest(driverUserId, requestId);
   if (!isValidTransition(request.status, "DRIVER_ARRIVED")) {
     throw new HttpError(409, `Cannot mark arrived from ${request.status}`);
   }
 
-  // Conditional on the status just read: guards against a concurrent
-  // cancel (or, in principle, another driver action racing on the same
-  // request) landing between this read and the write.
-  const result = await prisma.rideRequest.updateMany({
-    where: { id: requestId, status: request.status },
-    data: { status: "DRIVER_ARRIVED" },
-  });
-  if (result.count === 0) {
-    throw new HttpError(409, "This request's status changed before the update could apply");
+  const fromStatus = request.status;
+  const actor: EventActor = { id: driverUserId, role: actorRole };
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Conditional on the status just read: guards against a concurrent
+      // cancel (or, in principle, another driver action racing on the
+      // same request) landing between this read and the write.
+      const result = await tx.rideRequest.updateMany({
+        where: { id: requestId, status: fromStatus },
+        data: { status: "DRIVER_ARRIVED" },
+      });
+      if (result.count === 0) {
+        throw new HttpError(409, "This request's status changed before the update could apply");
+      }
+      await logStatusEvent(tx, {
+        requestId,
+        fromStatus,
+        toStatus: "DRIVER_ARRIVED",
+        actor,
+        outcome: "SUCCESS",
+      });
+    });
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 409) {
+      await logStatusEvent(prisma, {
+        requestId,
+        fromStatus,
+        toStatus: "DRIVER_ARRIVED",
+        actor,
+        outcome: "CONFLICT",
+      });
+    }
+    throw err;
   }
 
   return toPublicRideRequest({ ...request, status: "DRIVER_ARRIVED" });
 }
 
-export async function startRide(driverUserId: string, requestId: string) {
+export async function startRide(
+  driverUserId: string,
+  requestId: string,
+  actorRole: string
+) {
   const { request, pool } = await loadOwnedRequest(driverUserId, requestId);
   if (!isValidTransition(request.status, "STARTED")) {
     throw new HttpError(409, `Cannot start a ride from ${request.status}`);
   }
 
-  // The pool locks here, not at driver-arrived: a driver who has arrived
-  // but not yet pulled away should still be able to pick up one more
-  // compatible passenger.
-  //
-  // Request update and pool lock run in one transaction: previously these
-  // were two independent writes (Promise.all, not transactional), so a
-  // dropped write between them could leave a request marked STARTED with
-  // its pool still OPEN, or the reverse. The request update is also
-  // conditional on the status just read, guarding against a concurrent
-  // cancel landing in between.
-  await prisma.$transaction(async (tx) => {
-    const result = await tx.rideRequest.updateMany({
-      where: { id: requestId, status: request.status },
-      data: { status: "STARTED" },
+  const fromStatus = request.status;
+  const actor: EventActor = { id: driverUserId, role: actorRole };
+
+  try {
+    // The pool locks here, not at driver-arrived: a driver who has
+    // arrived but not yet pulled away should still be able to pick up one
+    // more compatible passenger.
+    //
+    // Request update and pool lock run in one transaction: previously
+    // these were two independent writes (Promise.all, not transactional),
+    // so a dropped write between them could leave a request marked
+    // STARTED with its pool still OPEN, or the reverse. The request
+    // update is also conditional on the status just read, guarding
+    // against a concurrent cancel landing in between.
+    await prisma.$transaction(async (tx) => {
+      const result = await tx.rideRequest.updateMany({
+        where: { id: requestId, status: fromStatus },
+        data: { status: "STARTED" },
+      });
+      if (result.count === 0) {
+        throw new HttpError(409, "This request's status changed before start could apply");
+      }
+      await tx.pool.update({ where: { id: pool.id }, data: { status: "LOCKED" } });
+      await logStatusEvent(tx, {
+        requestId,
+        fromStatus,
+        toStatus: "STARTED",
+        actor,
+        outcome: "SUCCESS",
+      });
     });
-    if (result.count === 0) {
-      throw new HttpError(409, "This request's status changed before start could apply");
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 409) {
+      await logStatusEvent(prisma, {
+        requestId,
+        fromStatus,
+        toStatus: "STARTED",
+        actor,
+        outcome: "CONFLICT",
+      });
     }
-    await tx.pool.update({ where: { id: pool.id }, data: { status: "LOCKED" } });
-  });
+    throw err;
+  }
 
   return toPublicRideRequest({ ...request, status: "STARTED" });
 }
 
-export async function completeRide(driverUserId: string, requestId: string) {
+export async function completeRide(
+  driverUserId: string,
+  requestId: string,
+  actorRole: string
+) {
   const { request, pool } = await loadOwnedRequest(driverUserId, requestId);
   if (!isValidTransition(request.status, "COMPLETED")) {
     throw new HttpError(409, `Cannot complete a ride from ${request.status}`);
   }
 
-  // Same shape as startRide: one transaction, conditional on the status
-  // just read, so request and pool status can't land in different
-  // outcomes and a concurrent action can't be silently overwritten.
-  await prisma.$transaction(async (tx) => {
-    const result = await tx.rideRequest.updateMany({
-      where: { id: requestId, status: request.status },
-      data: { status: "COMPLETED" },
+  const fromStatus = request.status;
+  const actor: EventActor = { id: driverUserId, role: actorRole };
+
+  try {
+    // Same shape as startRide: one transaction, conditional on the status
+    // just read, so request and pool status can't land in different
+    // outcomes and a concurrent action can't be silently overwritten.
+    await prisma.$transaction(async (tx) => {
+      const result = await tx.rideRequest.updateMany({
+        where: { id: requestId, status: fromStatus },
+        data: { status: "COMPLETED" },
+      });
+      if (result.count === 0) {
+        throw new HttpError(409, "This request's status changed before completion could apply");
+      }
+      await tx.pool.update({ where: { id: pool.id }, data: { status: "COMPLETED" } });
+      await logStatusEvent(tx, {
+        requestId,
+        fromStatus,
+        toStatus: "COMPLETED",
+        actor,
+        outcome: "SUCCESS",
+      });
     });
-    if (result.count === 0) {
-      throw new HttpError(409, "This request's status changed before completion could apply");
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 409) {
+      await logStatusEvent(prisma, {
+        requestId,
+        fromStatus,
+        toStatus: "COMPLETED",
+        actor,
+        outcome: "CONFLICT",
+      });
     }
-    await tx.pool.update({ where: { id: pool.id }, data: { status: "COMPLETED" } });
-  });
+    throw err;
+  }
 
   return toPublicRideRequest({ ...request, status: "COMPLETED" });
 }
@@ -455,4 +661,55 @@ export async function listOwnPoolHistory(driverUserId: string) {
   });
 
   return Promise.all(pools.map((pool) => toPoolWithPassengers(pool, tesla.capacity)));
+}
+
+// Per-ride audit trail: every attempted status transition for one
+// RideRequest, successes and conflicts alike, oldest first — this is a
+// timeline of what happened on the way to the current status, so reading
+// top-to-bottom in the order it occurred is the natural shape (unlike the
+// pool/ride "history" lists above, which are most-recent-first listings
+// of many separate items). Ownership check mirrors cancelRideRequest:
+// only the request's own passenger can read it.
+export async function getRideRequestHistory(passengerId: string, requestId: string) {
+  const request = await prisma.rideRequest.findUnique({ where: { id: requestId } });
+  if (!request) {
+    throw new HttpError(404, "Ride request not found");
+  }
+  if (request.passengerId !== passengerId) {
+    throw new HttpError(403, "Forbidden");
+  }
+
+  const events = await prisma.rideStatusEvent.findMany({
+    where: { rideRequestId: requestId },
+    orderBy: { createdAt: "asc" },
+  });
+  return events.map(toPublicEvent);
+}
+
+// Per-pool audit trail: every attempted status transition across every
+// ride request that has ever belonged to this pool, oldest first.
+// Ownership check mirrors getOwnPoolDetail: 404 if the pool doesn't
+// exist, 403 if it exists but belongs to a different driver's tesla.
+export async function getPoolStatusHistory(driverUserId: string, poolId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+
+  const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+  if (!pool) {
+    throw new HttpError(404, "Pool not found");
+  }
+  if (pool.teslaId !== tesla.id) {
+    throw new HttpError(403, "Forbidden");
+  }
+
+  const requests = await prisma.rideRequest.findMany({ where: { poolId } });
+  const requestIds = requests.map((r) => r.id);
+
+  const events = await prisma.rideStatusEvent.findMany({
+    where: { rideRequestId: { in: requestIds } },
+    orderBy: { createdAt: "asc" },
+  });
+  return events.map(toPublicEvent);
 }
