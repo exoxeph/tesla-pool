@@ -16,7 +16,6 @@ FROM node:20-alpine AS runner
 WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=build /repo/node_modules ./node_modules
-COPY --from=build /repo/apps/api/node_modules ./apps/api/node_modules
 COPY --from=build /repo/apps/api/dist ./apps/api/dist
 COPY --from=build /repo/apps/api/prisma ./apps/api/prisma
 COPY --from=build /repo/apps/api/package.json ./apps/api/package.json
