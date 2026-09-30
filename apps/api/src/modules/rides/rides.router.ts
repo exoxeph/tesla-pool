@@ -55,8 +55,8 @@ ridesRouter.get(
   "/rides/available",
   requireAuth,
   requireRole("DRIVER"),
-  asyncHandler(async (_req, res) => {
-    const requests = await listAvailableRideRequests();
+  asyncHandler(async (req, res) => {
+    const requests = await listAvailableRideRequests(req.auth!.sub);
     res.json({ requests });
   })
 );

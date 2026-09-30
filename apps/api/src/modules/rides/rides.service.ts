@@ -124,6 +124,15 @@ export async function acceptRideRequest(driverUserId: string, requestId: string)
   if (!tesla) {
     throw new HttpError(404, "No vehicle registered for this driver");
   }
+  // Going offline must never cancel or abandon a pool already in
+  // progress — it only stops NEW requests from matching to this driver.
+  // This is the one place that matters: markDriverArrived/startRide/
+  // completeRide operate on a request already linked to a pool, so they
+  // aren't gated here and keep working even if the driver goes offline
+  // mid-trip (e.g. toggling off right after picking up their last rider).
+  if (!tesla.isOnline) {
+    throw new HttpError(409, "Go online to accept new requests");
+  }
 
   const request = await prisma.rideRequest.findUnique({
     where: { id: requestId },
@@ -309,10 +318,31 @@ export async function completeRide(driverUserId: string, requestId: string) {
   return toPublicRideRequest({ ...request, status: "COMPLETED" });
 }
 
-// Not part of the original spec, but the driver dashboard needs a data
-// source for "requests relevant to this driver": open requests to accept,
-// plus ones already assigned to this driver's tesla in progress.
-export async function listAvailableRideRequests() {
+// "Relevant requests" for a driver — the simple option, chosen
+// deliberately: all currently unmatched (REQUESTED) requests system-wide,
+// not filtered by any driver location/zone. There's nothing to filter
+// by — no driver lat/lng, no registered driver zone anywhere in the
+// schema (geography-and-matching.md documents this as a deliberate
+// simplification for passenger-to-passenger matching too, not an
+// oversight specific to this endpoint). Building a zone-based filter
+// would mean adding a new schema field and inventing a "driver's zone"
+// concept nothing else in the app tracks, for a real capability
+// (geolocation-aware dispatch) explicitly out of scope per the PRD.
+// See README's "Driver-flow decisions" section for the full reasoning.
+//
+// Gated by online status: an offline driver sees nothing here, since
+// they can't act on any of it anyway (acceptRideRequest rejects with
+// 409 regardless) — showing requests a driver can't currently accept
+// would be misleading, not just an incomplete list.
+export async function listAvailableRideRequests(driverUserId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+  if (!tesla.isOnline) {
+    return [];
+  }
+
   const requests = await prisma.rideRequest.findMany({
     where: { status: "REQUESTED" },
     orderBy: { createdAt: "asc" },
