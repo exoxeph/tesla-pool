@@ -201,12 +201,25 @@ jest.mock("../../db/prisma", () => {
           where,
           orderBy,
         }: {
-          where: { poolId: string; status?: { not: string } };
+          where: {
+            poolId?: string;
+            passengerId?: string;
+            status?: { not: string } | { notIn: string[] };
+          };
           orderBy?: { createdAt: "asc" | "desc" };
         }) => {
           await tick();
-          let rows = rideRequests.filter((r) => r.poolId === where.poolId);
-          if (where.status?.not) rows = rows.filter((r) => r.status !== where.status!.not);
+          let rows = rideRequests;
+          if (where.poolId !== undefined) rows = rows.filter((r) => r.poolId === where.poolId);
+          if (where.passengerId !== undefined) {
+            rows = rows.filter((r) => r.passengerId === where.passengerId);
+          }
+          if (where.status && "not" in where.status) {
+            rows = rows.filter((r) => r.status !== (where.status as { not: string }).not);
+          } else if (where.status && "notIn" in where.status) {
+            const excluded = (where.status as { notIn: string[] }).notIn;
+            rows = rows.filter((r) => !excluded.includes(r.status));
+          }
           rows = [...rows].sort((a, b) =>
             orderBy?.createdAt === "desc"
               ? b.createdAt.getTime() - a.createdAt.getTime()
@@ -504,6 +517,94 @@ describe("POST /rides/request", () => {
     expect(res.status).toBe(201);
     expect(res.body.request.farePaisa).toBe(5731);
   });
+
+  it("rejects a second request from the same passenger while the first is still REQUESTED", async () => {
+    const first = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: BANANI.id, destinationZoneId: MOHAKHALI.id, seats: 1 });
+    expect(first.status).toBe(201);
+
+    const second = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: GULSHAN1.id, destinationZoneId: MOHAKHALI.id, seats: 1 });
+
+    expect(second.status).toBe(409);
+    expect(rideRequests).toHaveLength(1);
+  });
+
+  it("rejects a second request while the first is MATCHED, DRIVER_ARRIVED, or STARTED", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const firstId = await createRequest("passenger-1");
+    await acceptAs(driverToken, firstId);
+
+    const whileMatched = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: GULSHAN1.id, destinationZoneId: MOHAKHALI.id, seats: 1 });
+    expect(whileMatched.status).toBe(409);
+
+    await request(app).patch(`/rides/${firstId}/driver-arrived`).set("Authorization", driverToken);
+    const whileArrived = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: GULSHAN1.id, destinationZoneId: MOHAKHALI.id, seats: 1 });
+    expect(whileArrived.status).toBe(409);
+
+    await request(app).patch(`/rides/${firstId}/start`).set("Authorization", driverToken);
+    const whileStarted = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: GULSHAN1.id, destinationZoneId: MOHAKHALI.id, seats: 1 });
+    expect(whileStarted.status).toBe(409);
+
+    expect(rideRequests).toHaveLength(1);
+  });
+
+  it("allows a new request once the previous one is CANCELLED", async () => {
+    const firstId = await createRequest("passenger-1");
+    await request(app)
+      .patch(`/rides/${firstId}/cancel`)
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`);
+
+    const res = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: GULSHAN1.id, destinationZoneId: MOHAKHALI.id, seats: 1 });
+
+    expect(res.status).toBe(201);
+    expect(rideRequests).toHaveLength(2);
+  });
+
+  it("allows a new request once the previous one is COMPLETED", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const firstId = await createRequest("passenger-1");
+    await acceptAs(driverToken, firstId);
+    await request(app).patch(`/rides/${firstId}/driver-arrived`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${firstId}/start`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${firstId}/complete`).set("Authorization", driverToken);
+
+    const res = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`)
+      .send({ pickupZoneId: GULSHAN1.id, destinationZoneId: MOHAKHALI.id, seats: 1 });
+
+    expect(res.status).toBe(201);
+    expect(rideRequests).toHaveLength(2);
+  });
+
+  it("does not block a different passenger from requesting while the first passenger has an active one", async () => {
+    await createRequest("passenger-1");
+
+    const res = await request(app)
+      .post("/rides/request")
+      .set("Authorization", `Bearer ${tokenFor("passenger-2", "PASSENGER")}`)
+      .send({ pickupZoneId: BANANI.id, destinationZoneId: MOHAKHALI.id, seats: 1 });
+
+    expect(res.status).toBe(201);
+    expect(rideRequests).toHaveLength(2);
+  });
 });
 
 describe("GET /rides/mine", () => {
@@ -800,7 +901,7 @@ describe("ride lifecycle", () => {
 describe("GET /rides/available", () => {
   it("excludes a request already matched to a driver", async () => {
     const openId = await createRequest("passenger-1");
-    const matchedId = await createRequest("passenger-1");
+    const matchedId = await createRequest("passenger-2");
     await request(app)
       .post(`/rides/${matchedId}/accept`)
       .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
@@ -865,7 +966,7 @@ describe("GET /rides/driver-mine", () => {
       .post(`/rides/${idForDriver1}/accept`)
       .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
 
-    const idForDriver2 = await createRequest("passenger-1");
+    const idForDriver2 = await createRequest("passenger-2");
     await request(app)
       .post(`/rides/${idForDriver2}/accept`)
       .set("Authorization", `Bearer ${tokenFor("driver-2", "DRIVER")}`);
@@ -1175,7 +1276,7 @@ describe("GET /rides/pools/history", () => {
     await acceptAs(driverAToken, openId);
 
     // driver-2: unrelated completed trip, must never show up in driver-1's history.
-    const otherDriverRequestId = await createRequest("passenger-1");
+    const otherDriverRequestId = await createRequest("passenger-2");
     await acceptAs(driverBToken, otherDriverRequestId);
 
     const res = await request(app).get("/rides/pools/history").set("Authorization", driverAToken);
