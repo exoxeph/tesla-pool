@@ -297,6 +297,29 @@ export async function acceptRideRequest(
   let poolId: string;
   try {
     poolId = await prisma.$transaction(async (tx) => {
+      // findCompatibleOpenPool only ever checks ONE pool's own capacity
+      // (the candidate's, or none if it's founding a brand new one) — it
+      // has no way to see that the same Tesla might already have seats
+      // committed in a *different* still-active pool (an incompatible
+      // route it picked up earlier and hasn't finished yet). A physical
+      // car only has `capacity` seats no matter how many pools its
+      // requests happen to be split across, so the real limit has to be
+      // checked across every still-active pool this Tesla currently has
+      // (OPEN or LOCKED — not COMPLETED or CANCELLED), not just the one
+      // this request is about to join or found. This sum already
+      // includes the candidate pool's own seatsTaken when one was found,
+      // so it subsumes (not duplicates) the per-pool check just below.
+      const activePools = await tx.pool.findMany({
+        where: { teslaId: tesla.id, status: { in: ["OPEN", "LOCKED"] } },
+      });
+      const seatsAlreadyCommitted = activePools.reduce((sum, p) => sum + p.seatsTaken, 0);
+      if (seatsAlreadyCommitted + request.seats > tesla.capacity) {
+        throw new HttpError(
+          409,
+          "This vehicle is already carrying too many committed seats across its current trips"
+        );
+      }
+
       let targetPoolId: string;
 
       if (candidate) {

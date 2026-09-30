@@ -436,6 +436,8 @@ const BANANI = ZONES.find((z) => z.name === "Banani")!;
 const MOHAKHALI = ZONES.find((z) => z.name === "Mohakhali")!;
 const GULSHAN1 = ZONES.find((z) => z.name === "Gulshan 1")!;
 const FARMGATE = ZONES.find((z) => z.name === "Farmgate")!;
+const MIRPUR = ZONES.find((z) => z.name === "Mirpur")!;
+const UTTARA = ZONES.find((z) => z.name === "Uttara")!;
 
 beforeEach(() => {
   rideRequests = [];
@@ -1001,6 +1003,69 @@ describe("pooling", () => {
       actorRole: "DRIVER",
       outcome: "CONFLICT",
     });
+  });
+
+  it("caps total committed seats across ALL of a Tesla's active pools, not just the one pool being joined or founded", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+
+    // tesla-1 has capacity 3. These three pickups are all >1.5km apart, so
+    // each accept founds its own separate pool — the per-pool capacity
+    // check alone would let every one of them through, since no single
+    // pool ever holds more than its own seats. The bug this guards
+    // against: three pools independently under capacity (1, 2, 2 seats)
+    // still add up to 5 seats in one physical 3-seat car.
+    const aId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 1);
+    const resA = await acceptAs(driverToken, aId);
+    expect(resA.status).toBe(200);
+    const poolA = resA.body.request.poolId;
+
+    const bId = await createRequestWithRoute("passenger-2", FARMGATE.id, MOHAKHALI.id, 2);
+    const resB = await acceptAs(driverToken, bId);
+    expect(resB.status).toBe(200);
+    const poolB = resB.body.request.poolId;
+    expect(poolB).not.toBe(poolA);
+    // 1 + 2 = 3, exactly at capacity, split across two separate pools.
+
+    const cId = await createRequestWithRoute("passenger-3", MIRPUR.id, UTTARA.id, 2);
+    const resC = await acceptAs(driverToken, cId);
+
+    // A brand new third pool would individually have room for 2 seats,
+    // but the Tesla itself only has 3 seats total and all 3 are already
+    // committed across its other two still-active pools.
+    expect(resC.status).toBe(409);
+    expect(rideRequests.find((r) => r.id === cId)?.status).toBe("REQUESTED");
+    expect(rideRequests.find((r) => r.id === cId)?.poolId).toBeNull();
+    expect(pools.find((p) => p.id === poolA)?.seatsTaken).toBe(1);
+    expect(pools.find((p) => p.id === poolB)?.seatsTaken).toBe(2);
+
+    // The conflict is logged just like any other failed accept.
+    const conflictEvent = statusEvents.find(
+      (e) => e.rideRequestId === cId && e.outcome === "CONFLICT"
+    );
+    expect(conflictEvent).toMatchObject({
+      fromStatus: "REQUESTED",
+      toStatus: "MATCHED",
+      actorUserId: "driver-1",
+      actorRole: "DRIVER",
+      outcome: "CONFLICT",
+    });
+  });
+
+  it("frees up capacity once a pool completes, allowing a new pool to found afterward", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+
+    // Fill tesla-1 (capacity 3) with one 3-seat pool and run it to completion.
+    const aId = await createRequestWithRoute("passenger-1", BANANI.id, MOHAKHALI.id, 3);
+    const resA = await acceptAs(driverToken, aId);
+    expect(resA.status).toBe(200);
+    await request(app).patch(`/rides/${aId}/driver-arrived`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${aId}/start`).set("Authorization", driverToken);
+    await request(app).patch(`/rides/${aId}/complete`).set("Authorization", driverToken);
+
+    // Now that pool is COMPLETED, so it no longer counts against capacity.
+    const bId = await createRequestWithRoute("passenger-2", FARMGATE.id, MOHAKHALI.id, 2);
+    const resB = await acceptAs(driverToken, bId);
+    expect(resB.status).toBe(200);
   });
 });
 

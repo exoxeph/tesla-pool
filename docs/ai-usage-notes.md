@@ -813,3 +813,50 @@ prior run. The endpoint was correct; the seed data was stale. Topped up
 one demo account directly via SQL for the live walkthrough rather than
 editing `seed.ts`'s upsert logic, since fixing the seed's update-on-
 existing-user behavior was out of scope for this change.
+
+### Real overbooking bug, reported by the user from live demo data (fix/pool-capacity-overbooking)
+
+The user reported, from actually using the app: driver Jashim (Tesla
+capacity 3) had accepted three requests — 1, 2, and 2 seats — summing to
+5, over capacity. Verified this wasn't a one-off: querying the real
+Postgres data directly showed two of Jashim's completed pools both had
+`seatsTaken = 2` (plus a third, separate pool), consistent with the
+reported overbooking having actually happened, not a misreading.
+
+Root cause, found by reading `pool-matching.ts` and `acceptRideRequest`
+together rather than assuming the existing per-pool capacity checks were
+sufficient: `findCompatibleOpenPool` and the atomic "claim a seat"
+`updateMany` both correctly cap seats *within one pool*, and there's an
+existing, passing test (`"does not pool a request outside the matching
+rule, even into a pool with room"`) that deliberately exercises — and
+expects — a second pool being founded on the same Tesla for an
+incompatible route. Nothing anywhere summed seats *across* a Tesla's
+several simultaneously-active pools. Three individually-under-capacity
+pools (1, 2, 2) on one physical 3-seat car is exactly what that gap
+allows, and is exactly what got reported.
+
+Fixed by adding one aggregate check inside `acceptRideRequest`'s
+transaction: sum `seatsTaken` across every OPEN or LOCKED pool this
+Tesla currently has (COMPLETED and CANCELLED pools don't count — a
+finished trip frees its seats back up, confirmed with a dedicated test)
+and reject the accept with `409` if adding this request's seats would
+push that total over capacity. This sum already includes the candidate
+pool's own seats when one is being joined, so it subsumes rather than
+duplicates the existing per-pool guard — one check now covers both
+"joining a pool that's full" and "founding a new pool the car doesn't
+actually have room for."
+
+First test run failed with `500`s, not `409`s — the Jest mock's
+`pool.findMany` only understood `status` as an exact string or an
+`{ in: [...] }` list, not the `{ not: "COMPLETED" }` shape the fix
+initially used, so it threw. Rather than extend the mock, switched the
+real query to `{ in: ["OPEN", "LOCKED"] }`, which is both correct
+(explicitly names the two active statuses, including the `CANCELLED`
+pool status the schema reserves but never currently sets, instead of
+inferring "active" from "not one specific status") and already matches
+the shape another existing query (`listOwnPoolHistory`) uses for the
+opposite filter. Full suite green afterward (66/66, +2 new tests for
+this fix), `tsc` build clean, and live-verified end to end against the
+real running dev API: reproduced the exact reported 1-then-2-then-2
+sequence with fresh signups against driver Jashim, and the third accept
+now returns `409` instead of silently overbooking the car.
