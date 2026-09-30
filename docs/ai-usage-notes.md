@@ -494,6 +494,34 @@ itself evidence a race guard doesn't work — the *mechanism* used to
 produce concurrency matters, and shell-level parallelism isn't tight
 enough to reliably exercise a sub-millisecond database race.
 
+### Bug caught by a browser-based e2e pass — dashboard copy contradicted a merged feature
+
+Dispatched a Playwright-based e2e agent to verify `feature/ride-request`,
+`feature/ride-lifecycle`, and `feature/tesla-pooling` as real browser
+journeys against `master` (fresh signups, not the seed accounts, to
+avoid polluting demo data). All three passed cleanly — form validation,
+the full driver accept→arrived→start→complete flow with only-the-valid-
+next-action buttons, and real pooling confirmed via `GET /rides/pools/mine`
+(one pool, two passengers, second passenger's fare exactly 85% of the
+first's — the 15% discount applied correctly).
+
+The agent also flagged something worth fixing that wasn't part of the
+pass/fail check: both dashboard pages still had copy saying pooling was
+"the next milestone" (`apps/web/app/dashboard/page.tsx`'s "No invented
+matches" card, and the driver dashboard's "offline" helper text and
+"What happens next" roadmap item 01) — left over from before
+`feature/tesla-pooling` merged. This is the MVP-honesty rule pointing
+the other direction: the project's own contract says never *overclaim*
+capability the repo doesn't have, but underclaiming shipped, verified
+functionality is the same kind of dishonesty in reverse — a reviewer
+reading that card would conclude pooling isn't built, when it demonstrably
+is (this session's own e2e pass proved it). Verified the actual current
+file content before editing (not just trusting the agent's report), then
+corrected the copy to state plainly what's real (pooling and its
+discount are live) versus what's still missing (the UI doesn't visually
+group pooled passengers into one card yet — confirmed still true, not
+fixed here, scope-limited to the copy accuracy issue only).
+
 ### Corrected a false premise before implementing (feature/driver-flow)
 
 The task's instructions for the online/offline gate said: "Check where
