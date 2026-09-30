@@ -8,8 +8,10 @@ import {
   cancelRideRequest,
   completeRide,
   createRideRequest,
+  getOwnPoolDetail,
   listAvailableRideRequests,
   listOwnDriverRideRequests,
+  listOwnPoolHistory,
   listOwnPoolsWithPassengers,
   listOwnRideRequests,
   markDriverArrived,
@@ -55,8 +57,8 @@ ridesRouter.get(
   "/rides/available",
   requireAuth,
   requireRole("DRIVER"),
-  asyncHandler(async (_req, res) => {
-    const requests = await listAvailableRideRequests();
+  asyncHandler(async (req, res) => {
+    const requests = await listAvailableRideRequests(req.auth!.sub);
     res.json({ requests });
   })
 );
@@ -118,5 +120,27 @@ ridesRouter.get(
   asyncHandler(async (req, res) => {
     const pools = await listOwnPoolsWithPassengers(req.auth!.sub);
     res.json({ pools });
+  })
+);
+
+// Registered before /rides/pools/:id so "history" is never swallowed as
+// a pool id.
+ridesRouter.get(
+  "/rides/pools/history",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (req, res) => {
+    const pools = await listOwnPoolHistory(req.auth!.sub);
+    res.json({ pools });
+  })
+);
+
+ridesRouter.get(
+  "/rides/pools/:id",
+  requireAuth,
+  requireRole("DRIVER"),
+  asyncHandler(async (req, res) => {
+    const pool = await getOwnPoolDetail(req.auth!.sub, req.params.id);
+    res.json({ pool });
   })
 );

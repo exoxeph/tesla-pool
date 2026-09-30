@@ -28,7 +28,7 @@ function zoneName(zones: Zone[], id: string) {
   return zones.find((z) => z.id === id)?.name ?? id;
 }
 
-export function DriverRideActions() {
+export function DriverRideActions({ refreshKey = 0 }: { refreshKey?: number }) {
   const [zones, setZones] = useState<Zone[]>([]);
   const [available, setAvailable] = useState<RideRequest[] | null>(null);
   const [mine, setMine] = useState<RideRequest[] | null>(null);
@@ -64,7 +64,7 @@ export function DriverRideActions() {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   async function handleAccept(id: string) {
     setActionError(null);

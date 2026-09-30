@@ -521,3 +521,79 @@ corrected the copy to state plainly what's real (pooling and its
 discount are live) versus what's still missing (the UI doesn't visually
 group pooled passengers into one card yet — confirmed still true, not
 fixed here, scope-limited to the copy accuracy issue only).
+
+### Corrected a false premise before implementing (feature/driver-flow)
+
+The task's instructions for the online/offline gate said: "Check where
+[the] matching function queries for candidate pools/drivers and add the
+isOnline filter there." Checked `pool-matching.ts`'s
+`findCompatibleOpenPool` before writing any code — it never queries for
+candidate *drivers* at all. It only searches the one driver's own
+already-open pools, and that driver is already known, because they're
+the one who's calling `POST /rides/:id/accept`. There is no
+candidate-drivers query anywhere in that function to add a filter to;
+the premise was based on how a driver-scoped matching design might look
+in the abstract, not how this specific codebase's matching actually
+works (matching only ever runs inside a driver's own accept action —
+confirmed as a deliberate decision on `feature/tesla-pooling`, logged
+there).
+
+Rather than forcing a filter into a function that has nothing to filter,
+moved the gate to where it actually has to live: `acceptRideRequest`
+itself (rejects offline drivers with 409 before any matching runs) and
+`listAvailableRideRequests` (returns nothing to an offline driver).
+Documented this correction plainly in the README's "Driver-flow
+decisions" section rather than silently implementing something different
+from what was described without saying so.
+
+### Two more assumptions checked by inspecting the schema, not guessing
+
+Before writing the "relevant requests" endpoint, grepped the Prisma
+schema and `Tesla` model for any existing driver location/zone field —
+none exists, and `docs/geography-and-matching.md` already documents
+"driver location: not modeled" as a deliberate choice from an earlier
+branch. That confirmed the simpler option (all unmatched requests,
+system-wide) was correct without needing to ask, since the task itself
+said to pick the simpler option "unless we already track driver
+location/zone somewhere." No new schema field was added anywhere in this
+branch — confirmed by diffing `prisma/schema.prisma` against `master`
+before calling the branch done, per the task's explicit request to be
+asked before any schema change.
+
+Live-verified the offline-mid-pool behavior end to end against the real
+database, not just the mock: toggled a driver offline, confirmed
+`GET /rides/available` returned empty and a fresh accept attempt got
+409, then toggled back online, accepted a request, toggled offline
+*again* mid-trip, and confirmed driver-arrived/start/complete all still
+succeeded — matching the assumption stated in the README exactly.
+
+### Bug caught by a browser-based e2e pass on feature/driver-flow
+
+A second e2e agent run, this time against `feature/driver-flow` itself
+(not yet merged), found a real UI bug in code from this same branch:
+`DriverRideActions` only fetched `/rides/available` and
+`/rides/driver-mine` once on mount, with no dependency on the
+availability toggle. The underlying API was correct — a newly-online
+driver's server-side view was accurate — but the component never
+re-fetched, so "Riders waiting" kept showing "No pending requests right
+now" after toggling on, until a manual page reload. A real UX bug, not
+a copy issue like the previous session's finding, and specifically a
+regression risk of this branch's own core promise (online/offline
+"actually gates visibility") — the gate worked, but the UI lied about
+it being empty.
+
+Fixed with the same `refreshKey` counter pattern already used by
+`MyRides` on the passenger dashboard (confirmed by grepping for
+`refreshKey` across `apps/web` before writing the fix, not assumed) —
+bumped in the toggle handler, passed down as a prop, included in
+`DriverRideActions`'s effect dependencies. Verified live in browser
+(not just build-clean): fresh driver, offline by default, pending
+request correctly hidden, then "Turn availability on" clicked and the
+request appeared immediately with no reload.
+
+A tool-level note, not an app issue: mid-session, the harness's
+auto-mode safety classifier had a transient outage affecting Bash,
+PowerShell, and the browser MCP tools simultaneously. Retried per the
+tool's own guidance (once immediately, then after a read-only action)
+rather than working around it, and it recovered — used to confirm the
+fix live rather than shipping on code review and a clean build alone.

@@ -124,6 +124,15 @@ export async function acceptRideRequest(driverUserId: string, requestId: string)
   if (!tesla) {
     throw new HttpError(404, "No vehicle registered for this driver");
   }
+  // Going offline must never cancel or abandon a pool already in
+  // progress — it only stops NEW requests from matching to this driver.
+  // This is the one place that matters: markDriverArrived/startRide/
+  // completeRide operate on a request already linked to a pool, so they
+  // aren't gated here and keep working even if the driver goes offline
+  // mid-trip (e.g. toggling off right after picking up their last rider).
+  if (!tesla.isOnline) {
+    throw new HttpError(409, "Go online to accept new requests");
+  }
 
   const request = await prisma.rideRequest.findUnique({
     where: { id: requestId },
@@ -309,10 +318,31 @@ export async function completeRide(driverUserId: string, requestId: string) {
   return toPublicRideRequest({ ...request, status: "COMPLETED" });
 }
 
-// Not part of the original spec, but the driver dashboard needs a data
-// source for "requests relevant to this driver": open requests to accept,
-// plus ones already assigned to this driver's tesla in progress.
-export async function listAvailableRideRequests() {
+// "Relevant requests" for a driver — the simple option, chosen
+// deliberately: all currently unmatched (REQUESTED) requests system-wide,
+// not filtered by any driver location/zone. There's nothing to filter
+// by — no driver lat/lng, no registered driver zone anywhere in the
+// schema (geography-and-matching.md documents this as a deliberate
+// simplification for passenger-to-passenger matching too, not an
+// oversight specific to this endpoint). Building a zone-based filter
+// would mean adding a new schema field and inventing a "driver's zone"
+// concept nothing else in the app tracks, for a real capability
+// (geolocation-aware dispatch) explicitly out of scope per the PRD.
+// See README's "Driver-flow decisions" section for the full reasoning.
+//
+// Gated by online status: an offline driver sees nothing here, since
+// they can't act on any of it anyway (acceptRideRequest rejects with
+// 409 regardless) — showing requests a driver can't currently accept
+// would be misleading, not just an incomplete list.
+export async function listAvailableRideRequests(driverUserId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+  if (!tesla.isOnline) {
+    return [];
+  }
+
   const requests = await prisma.rideRequest.findMany({
     where: { status: "REQUESTED" },
     orderBy: { createdAt: "asc" },
@@ -336,6 +366,34 @@ export async function listOwnDriverRideRequests(driverUserId: string) {
   return requests.map(toPublicRideRequest);
 }
 
+// Shared shape for "a pool plus its full passenger list" — every
+// passenger's own pickup/destination/status/fare, not just whoever
+// joined most recently. Used by the mine/detail/history endpoints below
+// so the response shape only lives in one place.
+async function toPoolWithPassengers(pool: { id: string; status: string; seatsTaken: number }, capacity: number) {
+  const requests = await prisma.rideRequest.findMany({
+    where: { poolId: pool.id },
+    orderBy: { createdAt: "asc" },
+    include: { passenger: true },
+  });
+
+  return {
+    id: pool.id,
+    status: pool.status,
+    seatsTaken: pool.seatsTaken,
+    capacity,
+    passengers: requests.map((r) => ({
+      requestId: r.id,
+      passengerName: r.passenger.name,
+      pickupZoneId: r.pickupZoneId,
+      destinationZoneId: r.destinationZoneId,
+      seats: r.seats,
+      status: r.status,
+      farePaisa: r.farePaisa,
+    })),
+  };
+}
+
 // Driver-facing: the full passenger list per pool, not a flat list of
 // individual rides — this is what actually shows a driver that a pool is
 // shared, since listOwnDriverRideRequests (above) only gives one flat
@@ -351,29 +409,50 @@ export async function listOwnPoolsWithPassengers(driverUserId: string) {
     orderBy: { createdAt: "asc" },
   });
 
-  return Promise.all(
-    pools.map(async (pool) => {
-      const requests = await prisma.rideRequest.findMany({
-        where: { poolId: pool.id },
-        orderBy: { createdAt: "asc" },
-        include: { passenger: true },
-      });
+  return Promise.all(pools.map((pool) => toPoolWithPassengers(pool, tesla.capacity)));
+}
 
-      return {
-        id: pool.id,
-        status: pool.status,
-        seatsTaken: pool.seatsTaken,
-        capacity: tesla.capacity,
-        passengers: requests.map((r) => ({
-          requestId: r.id,
-          passengerName: r.passenger.name,
-          pickupZoneId: r.pickupZoneId,
-          destinationZoneId: r.destinationZoneId,
-          seats: r.seats,
-          status: r.status,
-          farePaisa: r.farePaisa,
-        })),
-      };
-    })
-  );
+// Single-pool detail, by id. Unlike listOwnPoolsWithPassengers (always
+// scoped to "my" tesla with no id to smuggle), this one takes an
+// attacker-controllable :id param, so ownership has to be checked
+// explicitly — 404 if the pool doesn't exist, 403 if it exists but
+// belongs to a different driver's tesla. Never reveals whether a pool
+// exists for a driver who doesn't own it beyond that 403/404 split.
+export async function getOwnPoolDetail(driverUserId: string, poolId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+
+  const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+  if (!pool) {
+    throw new HttpError(404, "Pool not found");
+  }
+  if (pool.teslaId !== tesla.id) {
+    throw new HttpError(403, "Forbidden");
+  }
+
+  return toPoolWithPassengers(pool, tesla.capacity);
+}
+
+// Ride/pool history: pools this driver has driven to a terminal state
+// (COMPLETED or CANCELLED), most recent first. Note: nothing in the
+// current codebase ever actually sets Pool.status to CANCELLED — only
+// individual RideRequests cancel, independent of their pool's overall
+// status — so in practice this only ever returns COMPLETED pools today.
+// Included anyway since CANCELLED is a real value of PoolStatus and a
+// history view should show it if it's ever reached, rather than baking
+// in today's reachability as a permanent assumption.
+export async function listOwnPoolHistory(driverUserId: string) {
+  const tesla = await prisma.tesla.findUnique({ where: { driverId: driverUserId } });
+  if (!tesla) {
+    throw new HttpError(404, "No vehicle registered for this driver");
+  }
+
+  const pools = await prisma.pool.findMany({
+    where: { teslaId: tesla.id, status: { in: ["COMPLETED", "CANCELLED"] } },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  return Promise.all(pools.map((pool) => toPoolWithPassengers(pool, tesla.capacity)));
 }
