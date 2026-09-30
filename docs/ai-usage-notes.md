@@ -720,3 +720,54 @@ caught by reading `auth.schema.ts`'s actual regex before running the
 script rather than after a confusing 400. Rewrote to build each phone
 number as a fixed 3-character prefix plus an 8-digit numeric suffix,
 verified against the regex by inspection before running.
+
+### Bugs caught while capturing screenshots for the README — stale "not built yet" claims, for the third time
+
+Asked to fill in the README's "Screenshots / GIFs" section with real
+captures (Docker, the API, and the web app all started fresh for this),
+the very first capture — the landing page — surfaced a real bug before
+any screenshot was usable: `components/fare-gauge.tsx`'s hero preview
+card said "Matching is the next milestone," and its own code comment
+claimed "the MVP does not yet have enough marketplace data to promise
+ETAs, fares, or matches." Both false — pooling, matching, and fares have
+been real since `feature/tesla-pooling` merged. A second instance turned
+up immediately after on the signup/login pages: `AuthShell`'s "Available
+in this MVP" sidebar list had "Route matching · coming next" styled
+dimmed, as an unbuilt item.
+
+This is the third time this exact class of bug has been caught in this
+project — stale frontend copy underselling a feature that was actually
+merged (see the two earlier "browser-based e2e pass" entries above,
+against the driver dashboard and passenger dashboard). Worth naming the
+pattern directly rather than treating each instance as unrelated: this
+codebase's frontend copy drifts out of sync with backend reality
+specifically at points where a feature *used to be* aspirational and the
+copy was never revisited after it shipped — and the failure mode is
+always "underclaim," never "overclaim," because nobody goes back to
+soften copy that turned out to be too optimistic, only copy that's now
+too pessimistic gets stale. Grepped the rest of `apps/web` for the same
+pattern (`coming next`, `coming soon`, `next milestone`, `not yet
+real/built/live`) before considering the sweep done, rather than fixing
+only the two instances actually seen. Fixed both, rebuilt (`npm run
+build:web`, clean), reran the full backend suite (61/61, unrelated to
+this change but run as a general regression check after any code edit),
+then re-captured the affected screenshots so the README doesn't
+permanently document a bug that was fixed minutes before the capture.
+
+### Live browser capture used to build real GIFs, not to fabricate a demo
+
+Built two animated GIFs (`docs/screenshots/passenger-request-flow.gif`,
+`driver-lifecycle-flow.gif`) from PNG frames captured via the
+chrome-devtools MCP tools while actually driving the running app —
+selecting real zones, watching a real computed fare appear
+(`৳57.31` for Banani→Mohakhali, confirmed against the same hand-computed
+value already verified in `rides.test.ts`; `৳114.62` at 2 seats, exactly
+double), submitting a real `POST /rides/request`, and, on the driver
+side, actually toggling `isOnline` and calling accept/driver-arrived/
+start/complete against the real API — then assembling the frame sequence
+into a GIF with `ffmpeg` (palette-generation + `paletteuse`, no external
+recording tool). No frame was staged or edited to show a state the app
+didn't actually reach; the driver-lifecycle GIF's "Riders waiting" list
+also happens to show several ride requests left over from earlier live-
+verification scripts this session, left in rather than cleaned up first,
+since a cluttered-but-real list is more honest than a curated-empty one.
