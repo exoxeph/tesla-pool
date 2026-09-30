@@ -538,3 +538,34 @@ database, not just the mock: toggled a driver offline, confirmed
 409, then toggled back online, accepted a request, toggled offline
 *again* mid-trip, and confirmed driver-arrived/start/complete all still
 succeeded — matching the assumption stated in the README exactly.
+
+### Bug caught by a browser-based e2e pass on feature/driver-flow
+
+A second e2e agent run, this time against `feature/driver-flow` itself
+(not yet merged), found a real UI bug in code from this same branch:
+`DriverRideActions` only fetched `/rides/available` and
+`/rides/driver-mine` once on mount, with no dependency on the
+availability toggle. The underlying API was correct — a newly-online
+driver's server-side view was accurate — but the component never
+re-fetched, so "Riders waiting" kept showing "No pending requests right
+now" after toggling on, until a manual page reload. A real UX bug, not
+a copy issue like the previous session's finding, and specifically a
+regression risk of this branch's own core promise (online/offline
+"actually gates visibility") — the gate worked, but the UI lied about
+it being empty.
+
+Fixed with the same `refreshKey` counter pattern already used by
+`MyRides` on the passenger dashboard (confirmed by grepping for
+`refreshKey` across `apps/web` before writing the fix, not assumed) —
+bumped in the toggle handler, passed down as a prop, included in
+`DriverRideActions`'s effect dependencies. Verified live in browser
+(not just build-clean): fresh driver, offline by default, pending
+request correctly hidden, then "Turn availability on" clicked and the
+request appeared immediately with no reload.
+
+A tool-level note, not an app issue: mid-session, the harness's
+auto-mode safety classifier had a transient outage affecting Bash,
+PowerShell, and the browser MCP tools simultaneously. Retried per the
+tool's own guidance (once immediately, then after a read-only action)
+rather than working around it, and it recovered — used to confirm the
+fix live rather than shipping on code review and a clean build alone.
