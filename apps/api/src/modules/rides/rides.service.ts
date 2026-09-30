@@ -69,6 +69,7 @@ function toPublicRideRequest(request: {
   seats: number;
   status: string;
   farePaisa: number | null;
+  paymentMethod: string;
   poolId: string | null;
   createdAt: Date;
 }) {
@@ -79,6 +80,7 @@ function toPublicRideRequest(request: {
     seats: request.seats,
     status: request.status,
     farePaisa: request.farePaisa,
+    paymentMethod: request.paymentMethod,
     poolId: request.poolId,
     createdAt: request.createdAt,
   };
@@ -119,6 +121,7 @@ export async function createRideRequest(
       destinationZoneId: input.destinationZoneId,
       seats: input.seats,
       farePaisa,
+      paymentMethod: input.paymentMethod,
     },
   });
 

@@ -52,6 +52,11 @@ async function main() {
     },
   });
 
+  // Demo passengers get a starting wallet balance so TESLAPAY is
+  // actually demoable — there's no top-up endpoint (out of scope per the
+  // PRD), so a seeded balance is the only way to see a real deduction.
+  const DEMO_WALLET_BALANCE_PAISA = 50000;
+
   const nusrat = await prisma.user.upsert({
     where: { phone: "01700000002" },
     update: {},
@@ -60,6 +65,7 @@ async function main() {
       phone: "01700000002",
       passwordHash,
       role: Role.PASSENGER,
+      walletBalancePaisa: DEMO_WALLET_BALANCE_PAISA,
     },
   });
 
@@ -71,6 +77,7 @@ async function main() {
       phone: "01700000003",
       passwordHash,
       role: Role.PASSENGER,
+      walletBalancePaisa: DEMO_WALLET_BALANCE_PAISA,
     },
   });
 
@@ -82,6 +89,7 @@ async function main() {
       phone: "01700000004",
       passwordHash,
       role: Role.PASSENGER,
+      walletBalancePaisa: DEMO_WALLET_BALANCE_PAISA,
     },
   });
 
