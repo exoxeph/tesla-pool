@@ -15,7 +15,7 @@ type MockRideRequest = {
   poolId: string | null;
   createdAt: Date;
 };
-type MockTesla = { id: string; driverId: string; label: string; capacity: number };
+type MockTesla = { id: string; driverId: string; label: string; capacity: number; isOnline: boolean };
 type MockPool = { id: string; teslaId: string; status: string; seatsTaken: number; createdAt: Date };
 
 const ZONES: MockZone[] = Object.entries(TEST_ZONES).map(([name, coords]) => ({
@@ -312,8 +312,8 @@ const FARMGATE = ZONES.find((z) => z.name === "Farmgate")!;
 beforeEach(() => {
   rideRequests = [];
   teslas = [
-    { id: "tesla-1", driverId: "driver-1", label: "Bullet", capacity: 3 },
-    { id: "tesla-2", driverId: "driver-2", label: "Volt", capacity: 4 },
+    { id: "tesla-1", driverId: "driver-1", label: "Bullet", capacity: 3, isOnline: true },
+    { id: "tesla-2", driverId: "driver-2", label: "Volt", capacity: 4, isOnline: true },
   ];
   pools = [];
   nextId = 1;
@@ -673,6 +673,48 @@ describe("GET /rides/available", () => {
     const ids = res.body.requests.map((r: { id: string }) => r.id);
     expect(ids).toContain(openId);
     expect(ids).not.toContain(matchedId);
+  });
+
+  it("returns nothing for an offline driver", async () => {
+    await createRequest("passenger-1");
+    teslas.find((t) => t.driverId === "driver-1")!.isOnline = false;
+
+    const res = await request(app)
+      .get("/rides/available")
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.requests).toHaveLength(0);
+  });
+});
+
+describe("online/offline gating", () => {
+  it("rejects accepting a new request while the driver's tesla is offline", async () => {
+    teslas.find((t) => t.driverId === "driver-1")!.isOnline = false;
+    const id = await createRequest("passenger-1");
+
+    const res = await acceptAs(`Bearer ${tokenFor("driver-1", "DRIVER")}`, id);
+
+    expect(res.status).toBe(409);
+    expect(rideRequests.find((r) => r.id === id)?.status).toBe("REQUESTED");
+  });
+
+  it("does not affect a pool already in progress when the driver goes offline", async () => {
+    const driverToken = `Bearer ${tokenFor("driver-1", "DRIVER")}`;
+    const id = await createRequest("passenger-1");
+    await acceptAs(driverToken, id);
+
+    // Driver toggles offline mid-trip — an already-matched request must
+    // still be workable through the rest of the lifecycle.
+    teslas.find((t) => t.driverId === "driver-1")!.isOnline = false;
+
+    const arrived = await request(app).patch(`/rides/${id}/driver-arrived`).set("Authorization", driverToken);
+    expect(arrived.status).toBe(200);
+    const started = await request(app).patch(`/rides/${id}/start`).set("Authorization", driverToken);
+    expect(started.status).toBe(200);
+    const completed = await request(app).patch(`/rides/${id}/complete`).set("Authorization", driverToken);
+    expect(completed.status).toBe(200);
+    expect(completed.body.request.status).toBe("COMPLETED");
   });
 });
 
