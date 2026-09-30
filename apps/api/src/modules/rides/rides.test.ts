@@ -1262,3 +1262,27 @@ describe("payment", () => {
     expect(pools.find((p) => p.id === poolId)?.status).toBe("LOCKED");
   });
 });
+
+describe("GET /rides/wallet", () => {
+  it("returns the authenticated passenger's own wallet balance", async () => {
+    const res = await request(app)
+      .get("/rides/wallet")
+      .set("Authorization", `Bearer ${tokenFor("passenger-1", "PASSENGER")}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ walletBalancePaisa: 100000 });
+  });
+
+  it("rejects a driver — wallet balance is a passenger-only concept", async () => {
+    const res = await request(app)
+      .get("/rides/wallet")
+      .set("Authorization", `Bearer ${tokenFor("driver-1", "DRIVER")}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects an unauthenticated request", async () => {
+    const res = await request(app).get("/rides/wallet");
+    expect(res.status).toBe(401);
+  });
+});

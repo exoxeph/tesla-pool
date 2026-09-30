@@ -119,3 +119,10 @@ export async function authedFetch<T>(
 
   return data as T;
 }
+
+// Passenger-only — backed by GET /rides/wallet, which reads
+// User.walletBalancePaisa (requireRole("PASSENGER") on the server).
+export async function fetchWalletBalance(): Promise<number> {
+  const data = await authedFetch<{ walletBalancePaisa: number }>("/rides/wallet");
+  return data.walletBalancePaisa;
+}

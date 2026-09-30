@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { authedFetch, fetchZones, type Zone } from "@/lib/auth-client";
 import { formatPaisa } from "@/lib/fare-estimate";
-import { Clock, Users } from "@/components/icons";
+import { Clock, Users, Wallet } from "@/components/icons";
 
 type RideRequest = {
   id: string;
@@ -12,6 +12,7 @@ type RideRequest = {
   seats: number;
   status: string;
   farePaisa: number | null;
+  paymentMethod: "CASH" | "TESLAPAY";
   poolId: string | null;
   createdAt: string;
 };
@@ -130,6 +131,10 @@ export function MyRides({ refreshKey }: { refreshKey: number }) {
                     {r.farePaisa === null ? "—" : formatPaisa(r.farePaisa)}
                   </span>
                 </div>
+                <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-500">
+                  <Wallet className="h-3.5 w-3.5" />
+                  {r.paymentMethod === "TESLAPAY" ? "TeslaPay wallet" : "Cash"}
+                </p>
                 <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
                   <span className="flex items-center gap-1.5 text-xs text-ink-500">
                     <Clock className="h-3.5 w-3.5" />
